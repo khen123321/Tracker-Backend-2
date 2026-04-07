@@ -1,6 +1,5 @@
 <?php
 
-use Exception;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\AttendanceController;
 use Illuminate\Support\Facades\Route;
@@ -39,7 +38,7 @@ Route::get('/create-admin', function () {
                 'status'     => 'active',
             ]
         );
-        return "Success! Superadmin created.";
+        return "<h1>Success!</h1><p>Superadmin account created for testadmin123@gmail.com.</p>";
     } catch (\Exception $e) {
         return "Error: " . $e->getMessage();
     }
