@@ -51,7 +51,7 @@ Route::get('/create-admin', function () {
         if (!$user) {
             User::create([
                 'name'     => 'Khen Joshua Verson',
-                'email'    => $email,
+                'email'    => 'test@gmail.com',
                 'password' => Hash::make('admin123'), // Change 'admin123' to your desired password
                 'role'     => 'admin', // Double check if your column is 'role' or 'is_admin'
             ]);
