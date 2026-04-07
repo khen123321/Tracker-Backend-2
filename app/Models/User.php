@@ -11,14 +11,55 @@ class User extends Authenticatable
 {
     use HasApiTokens, HasFactory, Notifiable;
 
+    /**
+     * The attributes that are mass assignable.
+     * Added 'permissions' to allow the Super Admin to save access keys.
+     */
     protected $fillable = [
-        'first_name', 'middle_name', 'last_name', 'email', 'password', 'role', 'status',
-        'emergency_contact_name', 'emergency_contact_phone', 'emergency_contact_address', 'emergency_relationship',
-        'course_program', 'school_university', 'assigned_branch', 'assigned_department', 'date_started',
-        'has_moa', 'has_endorsement', 'has_pledge', 'has_nda'
+        'first_name', 
+        'middle_name', 
+        'last_name', 
+        'email', 
+        'password', 
+        'role', 
+        'status',
+        'permissions', // <--- IMPORTANT: Added for RBAC
+        'emergency_contact_name', 
+        'emergency_contact_phone', 
+        'emergency_contact_address', 
+        'emergency_relationship',
+        'course_program', 
+        'school_university', 
+        'assigned_branch', 
+        'assigned_department', 
+        'date_started',
+        'has_moa', 
+        'has_endorsement', 
+        'has_pledge', 
+        'has_nda'
     ];
 
-    protected $hidden = ['password', 'remember_token'];
+    /**
+     * The attributes that should be hidden for serialization.
+     */
+    protected $hidden = [
+        'password', 
+        'remember_token'
+    ];
+
+    /**
+     * The attributes that should be cast.
+     * This converts the JSON database column into a usable PHP/React array automatically.
+     */
+    protected $casts = [
+        'email_verified_at' => 'datetime',
+        'password' => 'hashed',
+        'permissions' => 'array', // <--- IMPORTANT: Turns JSON into a list
+        'has_moa' => 'boolean',
+        'has_endorsement' => 'boolean',
+        'has_pledge' => 'boolean',
+        'has_nda' => 'boolean',
+    ];
 
     /**
      * Relationship to the Intern profile.

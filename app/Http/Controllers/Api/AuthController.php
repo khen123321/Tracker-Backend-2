@@ -7,69 +7,61 @@ use Illuminate\Http\Request;
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
 {
     // --- 1. LOGIN ---
     public function login(Request $request)
-{
-   $request->validate([
-        'email' => 'required|email',
-        'password' => 'required',
-        'role' => 'required|string' 
-    ]);
+    {
+        $request->validate([
+            'email' => 'required|email',
+            'password' => 'required',
+            'role' => 'required|string' // 'hr' or 'intern' from your frontend toggle
+        ]);
 
-    // 2. The Magic Lock: Attempt to find a user that matches ALL THREE fields
-    if (!Auth::attempt([
-        'email' => $request->email,
-        'password' => $request->password,
-        'role' => $request->role // <-- This strictly prevents cross-logging
-    ])) {
-        // If the email/password is wrong, OR if they selected the wrong toggle
+        // Find the user by email first
+        $user = User::where('email', $request->email)->first();
+
+        // Check if user exists and password is correct
+        if (!$user || !Hash::check($request->password, $user->password)) {
+            return response()->json(['message' => 'Invalid email or password.'], 401);
+        }
+
+        // --- ROLE VALIDATION LOGIC ---
+        // If they selected "HR" on the frontend, they must be 'hr' OR 'hr_intern'
+        if ($request->role === 'hr') {
+            if ($user->role !== 'hr' && $user->role !== 'hr_intern') {
+                return response()->json(['message' => 'Access denied. This is not an HR account.'], 403);
+            }
+        } 
+        // If they selected "Intern", they must be an 'intern'
+        else if ($request->role === 'intern') {
+            if ($user->role !== 'intern') {
+                return response()->json(['message' => 'Access denied. This is not an Intern account.'], 403);
+            }
+        }
+
+        // Generate Token
+        $token = $user->createToken('auth_token')->plainTextToken;
+
         return response()->json([
-            'message' => 'Invalid credentials or incorrect role selected.'
-        ], 401);
+            'access_token' => $token,
+            'user' => $user,
+            'role' => $user->role
+        ]);
     }
 
-    // 3. If it passes, generate the token
-    $user = Auth::user();
-    $token = $user->createToken('auth_token')->plainTextToken;
-
-    return response()->json([
-        'access_token' => $token,
-        'user' => $user,
-        'role' => $user->role
-    ]);
-
-    // Attempt to find the user
-    if (!Auth::attempt($request->only('email', 'password'))) {
-        return response()->json(['message' => 'Invalid login credentials.'], 401);
-    }
-
-    $user = Auth::user();
-    $token = $user->createToken('auth_token')->plainTextToken;
-
-    return response()->json([
-        'access_token' => $token,
-        'user' => $user,
-        'role' => $user->role // Make sure this is sent back!
-    ]);
-    }
-
-    // --- 2. REGISTER ---
-public function register(Request $request)
+    // --- 2. REGISTER (For Interns) ---
+    public function register(Request $request)
     {
         $request->validate([
             'first_name' => 'required|string|max:255',
             'last_name' => 'required|string|max:255',
-            'middle_name' => 'nullable|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
-            'password' => 'required|string|min:8|confirmed', // 'confirmed' looks for password_confirmation
+            'password' => 'required|string|min:8|confirmed',
         ]);
 
         $user = User::create([
-            // Personal Info
             'first_name' => $request->first_name,
             'middle_name' => $request->middle_name,
             'last_name' => $request->last_name,
@@ -77,25 +69,12 @@ public function register(Request $request)
             'password' => Hash::make($request->password),
             'role' => 'intern',
             'status' => 'active',
-
-            // Emergency Contact
-            'emergency_contact_name' => $request->emergency_contact_name,
-            'emergency_contact_phone' => $request->emergency_contact_phone,
-            'emergency_contact_address' => $request->emergency_contact_address,
-            'emergency_relationship' => $request->emergency_relationship,
-
             // School Details
             'course_program' => $request->course_program,
             'school_university' => $request->school_university,
             'assigned_branch' => $request->assigned_branch,
             'assigned_department' => $request->assigned_department,
             'date_started' => $request->date_started,
-
-            // Documents
-            'has_moa' => $request->has_moa ? 1 : 0,
-            'has_endorsement' => $request->has_endorsement ? 1 : 0,
-            'has_pledge' => $request->has_pledge ? 1 : 0,
-            'has_nda' => $request->has_nda ? 1 : 0,
         ]);
 
         $token = $user->createToken('auth_token')->plainTextToken;
@@ -103,30 +82,24 @@ public function register(Request $request)
         return response()->json([
             'message' => 'User registered successfully',
             'access_token' => $token,
-            'token_type' => 'Bearer',
             'user' => $user
         ], 201);
     }
 
-    // --- 3. GET CURRENT USER (ME) ---
+    // --- 3. GET CURRENT USER ---
     public function me(Request $request)
     {
-        // Returns the currently authenticated user's details
         return response()->json($request->user());
     }
 
-// --- 4. LOGOUT ---
+    // --- 4. LOGOUT ---
     public function logout(Request $request)
     {
-        // Check if user has a current token before attempting to delete
-        if ($request->user()->currentAccessToken()) {
-            /** @var \Laravel\Sanctum\PersonalAccessToken $token */
-            $token = $request->user()->currentAccessToken();
-            $token->delete();
-        }
+        if ($request->user() && $request->user()->currentAccessToken()) {
+        $request->user()->tokens()->where('id', $request->user()->currentAccessToken()->id)->delete();
+    }
 
         return response()->json([
-            'message' => 'Logged out successfully'
-        ]);
+        'message' => 'Logged out successfully']);
     }
 }

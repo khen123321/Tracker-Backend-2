@@ -8,10 +8,8 @@ return [
     */
     'paths'                    => ['api/*', 'sanctum/csrf-cookie'],
     'allowed_methods'          => ['*'],
-    'allowed_origins'          => [
-        'http://localhost:5173',   // Your React Vite dev server
-        'http://localhost:3000',   // Fallback
-    ],
+    'allowed_origins'          => ['http://localhost:5173', 'https://your-app.vercel.app'],
+
     'allowed_origins_patterns' => [],
     'allowed_headers' => ['*'],
     'exposed_headers' => [],
