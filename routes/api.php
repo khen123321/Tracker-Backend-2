@@ -9,21 +9,13 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Hash;
 use App\Models\User;
 
-/*
-|--------------------------------------------------------------------------
-| PUBLIC ROUTES (No Token Needed)
-|--------------------------------------------------------------------------
-*/
+// 1. PUBLIC ROUTES
 Route::group(['prefix' => 'auth'], function () {
     Route::post('/register', [AuthController::class, 'register']);
     Route::post('/login',    [AuthController::class, 'login']);
 });
 
-/*
-|--------------------------------------------------------------------------
-| PROTECTED ROUTES (Token Required)
-|--------------------------------------------------------------------------
-*/
+// 2. PROTECTED ROUTES
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/auth/logout', [AuthController::class, 'logout']);
     Route::get('/auth/me',      [AuthController::class, 'me']);
@@ -33,51 +25,25 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/hr/all-users', [HrController::class, 'getAllUsers']);
     Route::post('/hr/sub-users', [HrController::class, 'storeSubUser']);
     Route::post('/hr/update-permissions/{id}', [HrController::class, 'updatePermissions']);
-
-    // Attendance
     Route::post('/attendance/log', [AttendanceController::class, 'logAttendance']);
 });
 
-/*
-|--------------------------------------------------------------------------
-| SECRET REMOTE MIGRATION ROUTE (Temporary)
-|--------------------------------------------------------------------------
-*/
-Route::get('/run-migration', function () {
-    try {
-        Artisan::call('migrate', ['--force' => true]);
-        return "<h1>Migration Success!</h1><pre>" . Artisan::output() . "</pre>";
-    } catch (\Exception $e) {
-        return "<h1>Migration Failed</h1><p>" . $e->getMessage() . "</p>";
-    }
-});
-
-/*
-|--------------------------------------------------------------------------
-| SECRET ADMIN CREATOR (Temporary)
-|--------------------------------------------------------------------------
-*/
+// 3. SECRET ADMIN CREATOR (Run this once, then delete it)
 Route::get('/create-admin', function () {
     try {
-        // We use your USTP email here so the login matches your identity
-        $adminEmail = 'testadmin123@gmail.com';
-        $adminPassword = 'admin123'; 
-
-        // Check if this specific user already exists
-        $user = User::where('email', $adminEmail)->first();
-
-        if (!$user) {
-            User::create([
-                'name'     => 'Khen Joshua Verson',
-                'email'    => $adminEmail,
-                'password' => Hash::make($adminPassword),
-                'role'     => 'admin', // Ensure your migration has a 'role' column
-            ]);
-            return "<h1>Success!</h1><p>Admin account created for <b>$adminEmail</b>. <br>Your password is: <b>$adminPassword</b></p>";
-        }
-
-        return "<h1>Note</h1><p>Admin account already exists for $adminEmail. No changes made.</p>";
+        $email = 'khenjoshua.verson@1.ustp.edu.ph';
+        User::updateOrCreate(
+            ['email' => $email],
+            [
+                'first_name' => 'Khen Joshua',
+                'last_name'  => 'Verson',
+                'password'   => Hash::make('admin123'),
+                'role'       => 'hr', 
+                'status'     => 'active',
+            ]
+        );
+        return "<h1>Success!</h1><p>Admin account created for $email.</p>";
     } catch (\Exception $e) {
-        return "<h1>Error</h1><p>" . $e->getMessage() . "</p>";
+        return "Error: " . $e->getMessage();
     }
 });
