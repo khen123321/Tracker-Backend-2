@@ -28,13 +28,11 @@ class HrController extends Controller
     }
 
     /**
-     * Get ONLY Administrative Users (HR & HR Interns)
-     * This hides regular interns from the Role Management table.
+     * Get Administrative Users (Superadmin, HR & HR Interns)
      */
     public function getAllUsers()
     {
-        // We filter the query to only include administrative roles
-        $users = User::whereIn('role', ['hr', 'hr_intern'])
+        $users = User::whereIn('role', ['hr', 'hr_intern', 'superadmin'])
             ->orderBy('role', 'asc')
             ->get();
 
@@ -42,13 +40,13 @@ class HrController extends Controller
     }
 
     /**
-     * Create a new HR Intern account
+     * Create a new HR account
      */
     public function storeSubUser(Request $request)
     {
-        // Only the Super Admin email can create admin accounts
-        if (Auth::user()->email !== 'admin@climbs.com.ph') {
-            return response()->json(['message' => 'Unauthorized. Only Main HR can create accounts.'], 403);
+        // Check for superadmin role instead of a specific email
+        if (Auth::user()->role !== 'superadmin') {
+            return response()->json(['message' => 'Unauthorized. Only Superadmins can create accounts.'], 403);
         }
 
         $validated = $request->validate([
@@ -56,7 +54,7 @@ class HrController extends Controller
             'last_name'  => 'required|string|max:255',
             'email'      => 'required|email|unique:users,email',
             'password'   => 'required|min:6',
-            'role'       => 'required|in:hr_intern', 
+            'role'       => 'required|in:hr_intern,hr,superadmin', 
         ]);
 
         $user = User::create([
@@ -66,35 +64,37 @@ class HrController extends Controller
             'password'   => Hash::make($validated['password']),
             'role'       => $validated['role'],
             'status'     => 'active',
-            'permissions' => [] // New accounts start with no access
+            'permissions' => [] 
         ]);
 
         return response()->json(['message' => 'Account created successfully!'], 201);
     }
 
     /**
-     * Update permissions for a specific sub-admin
+     * Update roles and status for a specific user
      */
     public function updatePermissions(Request $request, $id)
     {
-        if (Auth::user()->email !== 'admin@climbs.com.ph') {
-            return response()->json(['message' => 'Access Denied.'], 403);
+        if (Auth::user()->role !== 'superadmin') {
+            return response()->json(['message' => 'Access Denied. Superadmin required.'], 403);
         }
 
         $request->validate([
-            'permissions' => 'required|array'
+            'role' => 'required|string|in:hr_intern,hr,superadmin',
+            'status' => 'required|string|in:active,inactive'
         ]);
 
         $user = User::findOrFail($id);
         
-        // Safety: Super Admin cannot be edited
-        if ($user->email === 'admin@climbs.com.ph') {
-            return response()->json(['message' => 'Cannot modify Super Admin.'], 400);
+        // Safety: Prevent the master superadmin from being locked out or demoted
+        if ($user->email === 'testadmin123@gmail.com' && $request->role !== 'superadmin') {
+            return response()->json(['message' => 'Cannot demote the primary master account.'], 400);
         }
 
-        $user->permissions = $request->permissions;
+        $user->role = $request->role;
+        $user->status = $request->status;
         $user->save();
 
-        return response()->json(['message' => 'Permissions updated!']);
+        return response()->json(['message' => 'User updated successfully!', 'user' => $user]);
     }
 }
