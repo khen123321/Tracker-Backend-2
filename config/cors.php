@@ -6,12 +6,15 @@ return [
     | Cross-Origin Resource Sharing (CORS) Configuration
     |--------------------------------------------------------------------------
     */
-    'paths'                    => ['api/*', 'sanctum/csrf-cookie'],
-    'allowed_methods'          => ['*'],
+    'paths' => ['api/*', 'sanctum/csrf-cookie', '*'], // Add '*' just to be safe in dev
+    'allowed_methods' => ['*'],
+    
+    // THIS IS THE MOST IMPORTANT LINE:
+    'allowed_origins' => ['*'], 
 
-    'allowed_origins' => ['http://localhost:5173', 'http://127.0.0.1:5173'],
+    'allowed_origins_patterns' => [],
     'allowed_headers' => ['*'],
     'exposed_headers' => [],
     'max_age' => 0,
-    'supports_credentials' => true,
+    'supports_credentials' => false, // Keep this false since you use Bearer tokens
 ];

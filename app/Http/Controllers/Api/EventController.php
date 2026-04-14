@@ -4,74 +4,113 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Event;
+use App\Models\User;
+use App\Notifications\NewEventNotification;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\DB; 
 
 class EventController extends Controller
 {
-    /**
-     * Fetch all events for the calendar.
-     */
     public function index()
     {
-        // We map the database columns to what FullCalendar expects (id, title, start)
         $events = Event::all()->map(function ($event) {
             return [
                 'id'    => $event->id,
                 'title' => $event->title,
-                // If there's a time, we combine it: 2026-04-07T10:00:00
                 'start' => $event->time ? "{$event->date}T{$event->time}" : $event->date,
                 'extendedProps' => [
                     'description' => $event->description,
                     'type'        => $event->type,
+                    'location'    => $event->location,
+                    'audience'    => $event->audience,
+                    'school'      => $event->school,
+                    'course'      => $event->course,
+                    'time'        => $event->time,
                 ],
                 'backgroundColor' => $this->getEventColor($event->type),
                 'borderColor'     => $this->getEventColor($event->type),
             ];
         });
-
         return response()->json($events);
     }
 
     /**
-     * Store a new event (HR only).
+     * ✅ DYNAMIC FILTERS: Accurate counts for your dashboard
      */
+    public function getFilters()
+    {
+        // 1. Fetch Schools (Case Insensitive)
+         // Example change in getFilters()
+$schools = User::where('role', 'LIKE', 'intern%')
+    ->whereNotNull('school_university')
+    ->select('school_university as school', DB::raw('count(*) as total'))
+    ->groupBy('school_university')
+    ->get();
+
+        // 2. Fetch Courses (Case Insensitive)
+        $courses = User::where('role', 'LIKE', 'intern%')
+            ->whereNotNull('course')
+            ->where('course', '!=', '')
+            ->select('course', DB::raw('count(*) as total'))
+            ->groupBy('course')
+            ->get();
+
+        return response()->json([
+            'schools' => $schools,
+            'courses' => $courses,
+        ]);
+    }
+
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'title'       => 'required|string|max:255',
+            'title'       => 'required|string',
             'date'        => 'required|date',
-            'time'        => 'nullable',
-            'type'        => 'required|in:holiday,meeting,deadline,other',
+            'audience'    => 'required|in:all,school,course,both,intern,hr_intern',
+            'school'      => 'nullable|string',
+            'course'      => 'nullable|string',
+            'type'        => 'required|string',
+            'location'    => 'nullable|string',
             'description' => 'nullable|string',
+            'time'        => 'nullable'
         ]);
 
-        // Create the event and link it to the logged-in HR user
-        $event = Event::create([
-            'title'       => $validated['title'],
-            'date'        => $validated['date'],
-            'time'        => $validated['time'] ?? null,
-            'type'        => $validated['type'],
-            'description' => $validated['description'] ?? '',
-            'created_by'  => Auth::id(), // Automatically gets the ID of the HR admin
-        ]);
+        $event = Event::create(array_merge($validated, ['created_by' => Auth::id()]));
 
-        return response()->json([
-            'message' => 'Event created successfully!',
-            'event'   => $event
-        ], 201);
+        // Notification Logic
+        $query = User::where('role', '!=', 'superadmin');
+        
+        if ($validated['audience'] === 'school') {
+            $query->where('school', $validated['school']);
+        } elseif ($validated['audience'] === 'course') {
+            $query->where('course', $validated['course']);
+        } elseif ($validated['audience'] === 'both') {
+            $query->where('school', $validated['school'])
+                  ->where('course', $validated['course']);
+        }
+
+        $users = $query->get();
+        if ($users->count() > 0) {
+            Notification::send($users, new NewEventNotification($event));
+        }
+
+        return response()->json($event, 201);
     }
 
-    /**
-     * Helper to set calendar colors based on event type
-     */
+    public function destroy($id)
+    {
+        Event::findOrFail($id)->delete();
+        return response()->json(['message' => 'Deleted']);
+    }
+
     private function getEventColor($type)
     {
-        return match($type) {
-            'holiday'  => '#ef4444', // Red
-            'meeting'  => '#3b82f6', // Blue
-            'deadline' => '#f59e0b', // Amber
-            default    => '#64748b', // Slate
+        return match(strtolower($type)) {
+            'holiday' => '#ef4444', 
+            'meeting' => '#3b82f6', 
+            default   => '#0B1EAE', 
         };
     }
 }

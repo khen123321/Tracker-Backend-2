@@ -36,7 +36,6 @@ class DashboardController extends Controller
         // ==========================================
         // 3. STRICT CATEGORIES (No Overlap)
         // ==========================================
-        // 'Present' now ONLY means they were strictly on time.
         $presentToday = $todayLogs->filter(function($log) {
             return strtolower(trim($log->status)) === 'present';
         })->count();
@@ -55,13 +54,8 @@ class DashboardController extends Controller
         // ==========================================
         // 4. METRICS & MATH
         // ==========================================
-        // Anyone physically in the building today
         $totalInBuilding = $presentToday + $lateToday;
-        
-        // Attendance Rate: Percentage of total interns who showed up (even if late)
         $attendanceRate = $totalInterns > 0 ? round(($totalInBuilding / $totalInterns) * 100) : 0;
-        
-        // On Time %: Percentage of present interns who were actually on time
         $onTimePercentage = $totalInBuilding > 0 ? round(($presentToday / $totalInBuilding) * 100) : 0;
         
         // Total Hours: Summed up ONLY for valid interns
@@ -70,19 +64,71 @@ class DashboardController extends Controller
             ->sum('hours_rendered') ?? 0;
 
         // ==========================================
-        // 5. PIE GRAPH LOGIC (Filtered)
+        // 5. DASHBOARD UI AGGREGATIONS (With JOINs)
         // ==========================================
-        // Groups exact course names (e.g., 'BSIT', 'BSHM') and counts them
-        $courseDistribution = Intern::whereIn('id', $validInternIds)
+        $colors = ['#0B1EAE', '#4F63F1', '#8A98E8', '#C2CBF5', '#64748B', '#94A3B8'];
+
+        // Course Distribution (Course is a direct column in interns table)
+        $courseDistribution = DB::table('interns')
+            ->whereIn('id', $validInternIds)
+            ->whereNotNull('course')
+            ->where('course', '!=', '')
             ->select('course as name', DB::raw('count(*) as value'))
             ->groupBy('course')
             ->get();
+
+        // Departments (JOIN with departments table via department_id)
+        $departments = DB::table('interns')
+            ->join('departments', 'interns.department_id', '=', 'departments.id')
+            ->whereIn('interns.id', $validInternIds)
+            ->select('departments.name as name', DB::raw('count(interns.id) as count'))
+            ->groupBy('departments.name')
+            ->orderByDesc('count')
+            ->get()
+            ->map(function($dept, $index) use ($totalInterns, $colors) {
+                $dept->total = $totalInterns;
+                $dept->color = $colors[$index % count($colors)];
+                return $dept;
+            });
+
+        // Branches (JOIN with branches table via branch_id)
+        $branches = DB::table('interns')
+            ->join('branches', 'interns.branch_id', '=', 'branches.id')
+            ->whereIn('interns.id', $validInternIds)
+            ->select('branches.name as name', DB::raw('count(interns.id) as count'))
+            ->groupBy('branches.name')
+            ->orderByDesc('count')
+            ->get()
+            ->map(function($branch) {
+                $branch->isHQ = in_array(strtolower($branch->name), ['main', 'bulua', 'head office']);
+                $branch->sub = 'Branch Office';
+                return $branch;
+            });
+
+        // Schools (JOIN with schools table via school_id)
+        $schools = DB::table('users')
+            ->whereIn('id', $validUserIds)
+            ->whereNotNull('school') // Assuming the column in users table is named 'school'
+            ->where('school', '!=', '')
+            ->select('school as name', DB::raw('count(*) as count'))
+            ->groupBy('school')
+            ->orderByDesc('count')
+            ->get()
+            ->map(function($school, $index) use ($colors) {
+                $school->color = $colors[$index % count($colors)];
+                $school->sub = 'University';
+                return $school;
+            });
+
+        // Pending Forms Placeholder (Can update later when building forms)
+        $pendingForms = 0;
 
         // ==========================================
         // 6. RETURN DATA TO REACT
         // ==========================================
         return response()->json([
             'total_interns' => $totalInterns,
+            'clocked_in_today' => $totalInBuilding,
             'attendance_rate' => $attendanceRate,
             'total_hours' => round($totalHours, 1),
             'on_time_percentage' => max(0, $onTimePercentage),
@@ -90,9 +136,14 @@ class DashboardController extends Controller
                 'present' => $presentToday,
                 'absent' => $absentToday,
                 'excused' => $excusedToday,
-                'late' => $lateToday
+                'late' => $lateToday,
+                'unexcused' => $absentToday
             ],
-            'course_distribution' => $courseDistribution
+            'pending_forms' => $pendingForms,
+            'course_distribution' => $courseDistribution,
+            'departments' => $departments,
+            'branches' => $branches,
+            'schools' => $schools
         ], 200);
     }
 }

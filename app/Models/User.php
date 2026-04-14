@@ -36,7 +36,9 @@ class User extends Authenticatable
         'has_moa', 
         'has_endorsement', 
         'has_pledge', 
-        'has_nda'
+        'has_nda',
+        'school',  // <--- ADD THIS
+        'course'
     ];
 
     /**

@@ -49,12 +49,16 @@ class AuthController extends Controller
 
     public function register(Request $request)
     {
+        // Added validation for the new fields as optional so it doesn't break old frontend requests
         $request->validate([
             'first_name' => 'required|string|max:255',
             'last_name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:8|confirmed',
-            'course_program' => 'required|string', // 👈 Ensure course is required
+            'course_program' => 'nullable|string', 
+            'school_university' => 'nullable|string',
+            'course' => 'nullable|string', // ✅ NEW
+            'school' => 'nullable|string', // ✅ NEW
         ]);
 
         // 1. Create the base User account
@@ -66,21 +70,30 @@ class AuthController extends Controller
             'password' => Hash::make($request->password),
             'role' => 'intern',
             'status' => 'active',
-            'course_program' => $request->course_program,
-            'school_university' => $request->school_university,
+            
+            // ✨ THE MAGIC TRICK: Save to both the old and new columns.
+            // If the frontend sends 'course', it fills both 'course' and 'course_program'.
+            'course_program' => $request->course_program ?? $request->course,
+            'school_university' => $request->school_university ?? $request->school,
+            'course' => $request->course ?? $request->course_program, // ✅ For the Events Calendar
+            'school' => $request->school ?? $request->school_university, // ✅ For the Events Calendar
+            
             'assigned_branch' => $request->assigned_branch,
             'assigned_department' => $request->assigned_department,
             'date_started' => $request->date_started,
         ]);
 
         // 2. ✨ Create the Intern Profile for the Graph & Attendance ✨
-        // We map the course_program from the form directly into the course column
+        // We map the course_program/course from the form directly into the Intern model
+       // 2. ✨ Create the Intern Profile for the Graph & Attendance ✨
         Intern::create([
             'user_id' => $user->id,
-            'course' => $request->course_program, 
-            'school_id' => 1, // You can make these dynamic later if you have tables for them
-            'branch_id' => 1,
-            'department_id' => 1,
+            'course' => $request->course_program ?? $request->course, 
+            
+            // Replace the '1's with the actual data from the form request!
+            'school_id' => $request->school_id,
+            'branch_id' => $request->branch_id,
+            'department_id' => $request->department_id,
         ]);
 
         $token = $user->createToken('auth_token')->plainTextToken;

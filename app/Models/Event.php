@@ -16,7 +16,10 @@ class Event extends Model
         'time',
         'description',
         'type',
-        'created_by'
+        'created_by',
+        'school',  // <--- ADD THIS
+        'course',
+        'audience'
     ];
 
     /**

@@ -68,6 +68,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // --- Intern Dashboard & Forms ---
     Route::get('/intern/dashboard-stats', [InternDashboardController::class, 'getStats']);
     Route::post('/intern/forms/submit',   [FormRequestController::class, 'store']);
+    Route::get('/event-filters', [EventController::class, 'getFilters']);
 });
 
 // ==========================================
