@@ -53,7 +53,7 @@ class AttendanceController extends Controller
     }
 
     /**
-     * 2. LOG ATTENDANCE (Clock In/Out with Dynamic Geofencing)
+     * 2. LOG ATTENDANCE (Clock In/Out with Dynamic Geofencing & HR Time Rules)
      */
     public function logAttendance(Request $request)
     {
@@ -107,6 +107,7 @@ class AttendanceController extends Controller
 
         $today = Carbon::today()->toDateString();
         $now = Carbon::now();
+        $customMessage = null; // Used to override the default success toast
 
         $log = AttendanceLog::firstOrNew([
             'intern_id' => $intern->id,
@@ -116,9 +117,20 @@ class AttendanceController extends Controller
         switch ($request->type) {
             case 'time_in':
                 if ($log->time_in) return response()->json(['message' => 'Already timed in for today.'], 400);
+                
                 $log->time_in = $now->toDateTimeString();
-                $log->status = $now->hour > 8 || ($now->hour == 8 && $now->minute > 15) ? 'late' : 'present';
                 $log->image_in = $imageName;
+
+                // 🕰️ RULE: 8:30 AM Official Start Time
+                $officialStartTime = Carbon::today()->setTime(8, 30, 0);
+
+                if ($now->lessThanOrEqualTo($officialStartTime)) {
+                    $log->status = 'present';
+                    $customMessage = "✅ You've clocked in at " . $now->format('g:i A') . ". Your official hours will be counted starting at 8:30 AM.";
+                } else {
+                    $log->status = 'late';
+                    $customMessage = "⚠️ Late arrival recorded at " . $now->format('g:i A') . ".";
+                }
                 break;
 
             case 'lunch_out':
@@ -136,19 +148,31 @@ class AttendanceController extends Controller
                 $log->time_out = $now->toDateTimeString(); 
                 $log->image_out = $imageName;
                 
-                // Calculate hours (Auto-deduct 1 hour for lunch if over 5 hours worked)
-                $start = Carbon::parse($log->time_in);
+                // 🕰️ HOURS CALCULATION RULES
+                $actualTimeIn = Carbon::parse($log->time_in);
+                $officialStartTime = Carbon::parse($log->date)->setTime(8, 30, 0);
+                
+                // Rule: Cap the start time at 8:30 AM for early birds
+                $effectiveTimeIn = $actualTimeIn->lessThan($officialStartTime) ? $officialStartTime : $actualTimeIn;
                 $end = $now;
-                $totalMinutes = $end->diffInMinutes($start);
-                $hours = ($totalMinutes > 300) ? ($totalMinutes - 60) / 60 : $totalMinutes / 60;
+                
+                $totalMinutes = $effectiveTimeIn->diffInMinutes($end);
+                
+                // Rule: Auto-deduct 1 hour (60 mins) for lunch if they worked over 5 hours (300 mins)
+                if ($totalMinutes > 300) {
+                    $totalMinutes -= 60;
+                }
+                
+                $hours = $totalMinutes / 60;
                 $log->hours_rendered = round($hours, 2);
                 break;
         }
 
         $log->save();
 
+        // Return custom UI message if defined, otherwise generic success message
         return response()->json([
-            'message' => Str::title(str_replace('_', ' ', $request->type)) . ' recorded successfully!',
+            'message' => $customMessage ?? Str::title(str_replace('_', ' ', $request->type)) . ' recorded successfully!',
             'log' => $log
         ], 200);
     }

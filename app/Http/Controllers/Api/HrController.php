@@ -130,21 +130,33 @@ class HrController extends Controller
         try {
             $log = AttendanceLog::findOrFail($id);
             
-            if ($request->action === 'approve') {
-                $log->status = 'present';
-                $log->is_flagged = 0;
-                $log->notes = null;
-            } elseif ($request->action === 'reject') {
-                // 🛑 We STOP changing the 'status' column to avoid the SQL ENUM error
-                $log->is_flagged = 1; 
+            if ($request->action === 'reject') {
+                $log->is_flagged = 1;
                 
-                // 📝 We save the reason in 'notes'
+                // Save the reason so the intern gets the notification
                 $log->notes = $request->reason ?? 'Rejected manually by HR Admin.';
+                
+                // ✨ STRICT RULE: "Time will not be recorded"
+                if ($log->time_out) {
+                    $log->time_out = null;
+                    $log->image_out = null;
+                    $log->hours_rendered = 0; // Wipe the calculated hours
+                } elseif ($log->lunch_in) {
+                    $log->lunch_in = null;
+                    $log->lunch_in_selfie = null;
+                } elseif ($log->lunch_out) {
+                    $log->lunch_out = null;
+                    $log->lunch_out_selfie = null;
+                } elseif ($log->time_in) {
+                    $log->time_in = null;
+                    $log->image_in = null;
+                    // 🛑 We removed the $log->status = 'pending'; line here to prevent the MySQL crash!
+                }
+                
+                $log->save();
             }
             
-            $log->save();
-            return response()->json(['message' => 'Attendance flagged as rejected successfully']);
-            
+            return response()->json(['message' => 'Attendance flagged and time removed successfully']);
         } catch (\Exception $e) {
             return response()->json([
                 'message' => 'Backend Error',
