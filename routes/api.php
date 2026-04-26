@@ -3,6 +3,7 @@
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Storage; // ✨ REQUIRED FOR FILE PROXY
 use App\Models\User;
 use App\Models\School;
 use App\Models\Department;
@@ -65,6 +66,23 @@ Route::prefix('public')->group(function () {
     });
 });
 
+// ✨ THE CORS BYPASS: Serves local images from storage/app/public ✨
+Route::get('/get-avatar', function (Request $request) {
+    // This will be "avatars/filename.jpg"
+    $path = $request->query('path');
+
+    // Look specifically inside the 'public' disk
+    if (Storage::disk('public')->exists($path)) {
+        $file = Storage::disk('public')->get($path);
+        $type = Storage::disk('public')->mimeType($path);
+        
+        // Return the raw image, but wrapped in Laravel's CORS middleware!
+        return response($file, 200)->header('Content-Type', $type);
+    }
+
+    return response()->json(['error' => 'File not found'], 404);
+});
+
 
 // ==========================================
 // Protected Routes (Requires Sanctum Token)
@@ -89,7 +107,16 @@ Route::middleware('auth:sanctum')->group(function () {
         return response()->json(['message' => 'Notifications marked as read']);
     });
 
-    // ✨ THE MISSING ROUTE HAS BEEN ADDED HERE ✨
+    // ✨ THE MISSING NOTIFICATION READ ROUTE (Fixes the 404 error) ✨
+    Route::post('/notifications/{id}/read', function (Request $request, $id) {
+        $notification = $request->user()->notifications()->find($id);
+        if ($notification) {
+            $notification->markAsRead();
+            return response()->json(['message' => 'Notification marked as read!']);
+        }
+        return response()->json(['message' => 'Notification not found.'], 404);
+    });
+
     Route::get('/intern/notifications', [AttendanceController::class, 'getNotifications']);
 
     // --- HR Management ---
@@ -99,7 +126,15 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/hr/update-permissions/{id}', [HrController::class, 'updatePermissions']);
     Route::get('/hr/users-roles', [HrController::class, 'getRoleUsers']);
     Route::put('/hr/users-roles/{id}', [HrController::class, 'updateUserAccess']);
-    Route::post('/hr/users', [HrController::class, 'storeSubUser']);
+    Route::post('/hr/users', [HrController::class, 'storeSubUser']); 
+    Route::get('/hr/interns/{id}/document/{type}', [InternController::class, 'viewDocument']);
+    
+    // ✨ HR Dashboard Chart Data ✨
+    Route::get('/hr/dashboard/schools', [DashboardController::class, 'getSchools']);
+    
+    // ✨ HR Dashboard Pending Requests Processing ✨
+    Route::get('/hr/requests/{id}', [FormRequestController::class, 'show']); 
+    Route::post('/hr/requests/{id}/process', [FormRequestController::class, 'processRequest']);
     
     // --- Events & Intern Attendance ---
     Route::get('/events',   [EventController::class, 'index']);
@@ -161,8 +196,17 @@ Route::middleware('auth:sanctum')->group(function () {
         return response()->json(['message' => 'Branch deleted successfully']);
     });
 
-    // --- Intern Profiles ---
+    // --- Intern Profiles & Uploads ---
+    
+    // Standard Profile Fetch (Handles /hr/interns/me and standard ID fetching)
     Route::get('/hr/interns/{id}', [InternController::class, 'show']);
+    
+    // Dedicated HR Endpoint for specific relationships to prevent conflicts
+    Route::get('/hr/intern-data/{id}', [InternController::class, 'showForHr']);
+    
+    // File Upload Routes
+    Route::post('/intern/upload-avatar', [InternController::class, 'uploadAvatar']);
+    Route::post('/intern/upload-document', [InternController::class, 'uploadDocument']);
     
     // Bulk Actions
     Route::post('/hr/interns/bulk-remove', [HrController::class, 'bulkRemove']);

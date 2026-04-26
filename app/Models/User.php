@@ -24,7 +24,8 @@ class User extends Authenticatable
         'status',        // e.g., 'active', 'inactive'
         'school_id',
         'branch_id',
-        'department_id'
+        'department_id',
+        'permissions'    // ✨ ADDED: Prevents crashes when updating HR access
     ];
 
     /**
@@ -41,7 +42,7 @@ class User extends Authenticatable
     protected $casts = [
         'email_verified_at' => 'datetime',
         'password' => 'hashed',
-        'permissions' => 'array', // ✨ THIS IS THE FIX ✨
+        'permissions' => 'array', 
     ];
 
     // ==========================================
@@ -72,7 +73,13 @@ class User extends Authenticatable
 
     public function attendance_logs()
     {
-        // ✨ THE FIX: We tell Laravel specifically to look for 'intern_id' instead of 'user_id'
+        // We tell Laravel specifically to look for 'intern_id' instead of 'user_id'
         return $this->hasMany(AttendanceLog::class, 'intern_id');
+    }
+
+    // ✨ NEW: Tells Laravel this user can have many form requests ✨
+    public function internRequests()
+    {
+        return $this->hasMany(InternRequest::class, 'user_id');
     }
 }

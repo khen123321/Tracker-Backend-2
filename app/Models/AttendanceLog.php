@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Carbon\Carbon; // ✨ Added Carbon to handle the date formatting
 
 class AttendanceLog extends Model
 {
@@ -24,6 +25,18 @@ class AttendanceLog extends Model
         'is_flagged', 
         'notes'
     ];
+
+    // ✨ 1. Tell Laravel to automatically append this field when sending to React
+    protected $appends = ['day_of_week'];
+
+    // ✨ 2. The Accessor: Magically calculates the day of the week on the fly!
+    public function getDayOfWeekAttribute()
+    {
+        if (!$this->date) return null;
+        
+        // This takes the '2026-04-26' date and turns it into 'Sun', 'Mon', etc.
+        return Carbon::parse($this->date)->format('D'); 
+    }
 
     // 👇 Defines the relationship so an Attendance Log belongs to an Intern 👇
     public function intern()

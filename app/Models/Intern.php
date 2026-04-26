@@ -19,6 +19,11 @@ class Intern extends Model
         'required_hours',
         'rendered_hours',
         'date_started',
+        
+        // ✨ NEWLY ADDED FIELDS FOR FILE UPLOADS ✨
+        'avatar_url', 
+        'has_resume',
+        
         'has_moa',
         'has_endorsement',
         'has_pledge',

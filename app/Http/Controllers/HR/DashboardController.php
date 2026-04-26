@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\User;
 use App\Models\Intern;
+use App\Models\InternRequest; 
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -15,60 +16,35 @@ class DashboardController extends Controller
     {
         $today = Carbon::today()->toDateString();
 
-        // ==========================================
-        // 1. THE FILTER WALL (Valid Interns Only)
-        // ==========================================
-        // Lowercase check to catch 'intern' or 'hr intern' regardless of formatting
+        // 1. THE FILTER WALL
         $validUserIds = User::whereIn(DB::raw('LOWER(role)'), ['intern', 'hr intern'])->pluck('id');
         $totalInterns = count($validUserIds);
-        
-        // Get the specific Intern Profile IDs for these valid users
         $validInternIds = Intern::whereIn('user_id', $validUserIds)->pluck('id');
 
-        // ==========================================
-        // 2. FETCH ATTENDANCE LOGS (Filtered)
-        // ==========================================
+        // 2. FETCH ATTENDANCE LOGS
         $todayLogs = DB::table('attendance_logs')
             ->whereDate('date', $today)
-            ->whereIn('intern_id', $validInternIds) // 🛡️ Completely ignores SuperAdmins/HR Heads
+            ->whereIn('intern_id', $validInternIds) 
             ->get();
 
-        // ==========================================
-        // 3. STRICT CATEGORIES (No Overlap)
-        // ==========================================
-        $presentToday = $todayLogs->filter(function($log) {
-            return strtolower(trim($log->status)) === 'present';
-        })->count();
-
-        $lateToday = $todayLogs->filter(function($log) {
-            return strtolower(trim($log->status)) === 'late';
-        })->count();
-
-        $excusedToday = $todayLogs->filter(function($log) {
-            return strtolower(trim($log->status)) === 'excused';
-        })->count();
-
-        // Absent = Total Interns minus everyone who has a log today (Present + Late + Excused)
+        // 3. STRICT CATEGORIES
+        $presentToday = $todayLogs->filter(fn($log) => strtolower(trim($log->status)) === 'present')->count();
+        $lateToday = $todayLogs->filter(fn($log) => strtolower(trim($log->status)) === 'late')->count();
+        $excusedToday = $todayLogs->filter(fn($log) => strtolower(trim($log->status)) === 'excused')->count();
         $absentToday = max(0, $totalInterns - ($presentToday + $lateToday + $excusedToday));
 
-        // ==========================================
         // 4. METRICS & MATH
-        // ==========================================
         $totalInBuilding = $presentToday + $lateToday;
         $attendanceRate = $totalInterns > 0 ? round(($totalInBuilding / $totalInterns) * 100) : 0;
         $onTimePercentage = $totalInBuilding > 0 ? round(($presentToday / $totalInBuilding) * 100) : 0;
         
-        // Total Hours: Summed up ONLY for valid interns
         $totalHours = DB::table('attendance_logs')
             ->whereIn('intern_id', $validInternIds)
             ->sum('hours_rendered') ?? 0;
 
-        // ==========================================
-        // 5. DASHBOARD UI AGGREGATIONS (With JOINs)
-        // ==========================================
+        // 5. DASHBOARD UI AGGREGATIONS
         $colors = ['#0B1EAE', '#4F63F1', '#8A98E8', '#C2CBF5', '#64748B', '#94A3B8'];
 
-        // Course Distribution (Course is a direct column in interns table)
         $courseDistribution = DB::table('interns')
             ->whereIn('id', $validInternIds)
             ->whereNotNull('course')
@@ -77,7 +53,6 @@ class DashboardController extends Controller
             ->groupBy('course')
             ->get();
 
-        // Departments (JOIN with departments table via department_id)
         $departments = DB::table('interns')
             ->join('departments', 'interns.department_id', '=', 'departments.id')
             ->whereIn('interns.id', $validInternIds)
@@ -91,7 +66,6 @@ class DashboardController extends Controller
                 return $dept;
             });
 
-        // Branches (JOIN with branches table via branch_id)
         $branches = DB::table('interns')
             ->join('branches', 'interns.branch_id', '=', 'branches.id')
             ->whereIn('interns.id', $validInternIds)
@@ -105,13 +79,12 @@ class DashboardController extends Controller
                 return $branch;
             });
 
-        // Schools (JOIN with schools table via school_id)
-        $schools = DB::table('users')
-            ->whereIn('id', $validUserIds)
-            ->whereNotNull('school') // Assuming the column in users table is named 'school'
-            ->where('school', '!=', '')
-            ->select('school as name', DB::raw('count(*) as count'))
-            ->groupBy('school')
+        // ✨ FIXED: Now joining the 'schools' table via the 'interns' school_id
+        $schools = DB::table('interns')
+            ->join('schools', 'interns.school_id', '=', 'schools.id')
+            ->whereIn('interns.id', $validInternIds)
+            ->select('schools.name as name', DB::raw('count(interns.id) as count'))
+            ->groupBy('schools.name')
             ->orderByDesc('count')
             ->get()
             ->map(function($school, $index) use ($colors) {
@@ -120,11 +93,49 @@ class DashboardController extends Controller
                 return $school;
             });
 
-        // Pending Forms Placeholder (Can update later when building forms)
-        $pendingForms = 0;
+        // ==========================================
+        // 6. FETCH PENDING REQUESTS
+        // ==========================================
+        $rawRequests = InternRequest::with('user')
+            ->whereRaw('LOWER(status) = ?', ['pending'])
+            ->orderBy('created_at', 'asc')
+            ->get();
+
+        $pendingRequests = [
+            'absent' => [],
+            'halfDay' => [],
+            'overtime' => []
+        ];
+
+        foreach ($rawRequests as $req) {
+            $internName = $req->user 
+                ? $req->user->first_name . ' ' . $req->user->last_name 
+                : 'Unknown Intern';
+
+            $formattedReq = [
+                'id' => $req->id,
+                'intern_name' => $internName,
+                'date' => \Carbon\Carbon::parse($req->date_of_absence)->format('M d, Y'),
+                'reason' => $req->reason ?? 'No reason provided',
+                'hours' => null 
+            ];
+
+            // Group them based on the type they submitted
+            $typeStr = strtolower($req->type);
+            
+            if (str_contains($typeStr, 'absent') || str_contains($typeStr, 'leave')) {
+                $pendingRequests['absent'][] = $formattedReq;
+            } elseif (str_contains($typeStr, 'half')) {
+                $pendingRequests['halfDay'][] = $formattedReq;
+            } elseif (str_contains($typeStr, 'overtime') || str_contains($typeStr, 'extra')) {
+                $pendingRequests['overtime'][] = $formattedReq;
+            } else {
+                $pendingRequests['absent'][] = $formattedReq; 
+            }
+        }
 
         // ==========================================
-        // 6. RETURN DATA TO REACT
+        // 7. RETURN DATA TO REACT
         // ==========================================
         return response()->json([
             'total_interns' => $totalInterns,
@@ -139,11 +150,35 @@ class DashboardController extends Controller
                 'late' => $lateToday,
                 'unexcused' => $absentToday
             ],
-            'pending_forms' => $pendingForms,
+            'pending_forms' => count($rawRequests), 
             'course_distribution' => $courseDistribution,
             'departments' => $departments,
             'branches' => $branches,
-            'schools' => $schools
+            'schools' => $schools,
+            'pending_requests' => $pendingRequests
         ], 200);
+    }
+
+    public function getSchools()
+    {
+        $validUserIds = User::whereIn(DB::raw('LOWER(role)'), ['intern', 'hr intern'])->pluck('id');
+        $validInternIds = Intern::whereIn('user_id', $validUserIds)->pluck('id');
+        
+        $colors = ['#0B1EAE', '#4F63F1', '#8A98E8', '#C2CBF5', '#64748B', '#94A3B8'];
+
+        // ✨ FIXED: Now joining the 'schools' table to get real chart data
+        $schools = DB::table('interns')
+            ->join('schools', 'interns.school_id', '=', 'schools.id')
+            ->whereIn('interns.id', $validInternIds)
+            ->select('schools.name as name', DB::raw('count(interns.id) as value'))
+            ->groupBy('schools.name')
+            ->orderByDesc('value')
+            ->get()
+            ->map(function($school, $index) use ($colors) {
+                $school->color = $colors[$index % count($colors)];
+                return $school;
+            });
+
+        return response()->json($schools, 200);
     }
 }

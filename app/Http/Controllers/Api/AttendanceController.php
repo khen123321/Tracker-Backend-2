@@ -193,7 +193,7 @@ class AttendanceController extends Controller
     }
 
     /**
-     * 4. GET HR INTERN ATTENDANCE MODAL DATA
+     * 4. GET HR INTERN ATTENDANCE MODAL DATA (✨ UPDATED FOR REACT ✨)
      */
     public function getInternAttendanceForHR($id)
     {
@@ -227,13 +227,17 @@ class AttendanceController extends Controller
         }
 
         // Assuming 486 standard OJT hours
-        $completionRate = round(($totalHours / 486) * 100, 1);
+        $completionRate = 0;
+        if ($totalHours > 0) {
+            $completionRate = round(($totalHours / 486) * 100, 1);
+            if ($completionRate > 100) $completionRate = 100; // Cap at 100%
+        }
 
         return response()->json([
             'logs' => $logs->map(function($log) {
                 return [
                     'id' => $log->id,
-                    'date' => Carbon::parse($log->date)->format('F j, Y'),
+                    'date' => Carbon::parse($log->date)->format('Y-m-d'), // ✨ Format required for React filtering
                     'am_in' => $log->time_in ? Carbon::parse($log->time_in)->format('H:i:s') : null,
                     'am_out' => $log->lunch_out ? Carbon::parse($log->lunch_out)->format('H:i:s') : null,
                     'pm_in' => $log->lunch_in ? Carbon::parse($log->lunch_in)->format('H:i:s') : null,
