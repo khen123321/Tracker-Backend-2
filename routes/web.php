@@ -2,18 +2,21 @@
 
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 
 Route::get('/', function () {
     return view('welcome');
 });
 
 // =====================================================================
-// TEMPORARY SECURE MIGRATION ROUTE
-// TODO: Delete this route completely after your login works!
+// TEMPORARY SECURE MIGRATION & TEST ROUTE
 // =====================================================================
 Route::get('/run-secret-migrations-2026', function () {
     try {
-        // This forces the migration to run on your live Aiven database
+        // Step 1: Explicitly test the database connection first
+        DB::connection()->getPdo();
+
+        // Step 2: If connection works, run the migrations
         Artisan::call('migrate', ['--force' => true]);
         
         return response()->json([
@@ -21,10 +24,14 @@ Route::get('/run-secret-migrations-2026', function () {
             'message' => 'Database tables built successfully! You can now log in.',
             'output' => Artisan::output()
         ]);
-    } catch (\Exception $e) {
+
+    } catch (\Throwable $e) {
+        // \Throwable catches EVERYTHING, preventing a silent 500 crash
         return response()->json([
             'status'  => 'error',
-            'message' => 'Migration failed: ' . $e->getMessage()
+            'message' => 'CRITICAL ERROR: ' . $e->getMessage(),
+            'file'    => $e->getFile(),
+            'line'    => $e->getLine()
         ]);
     }
 });
