@@ -1,6 +1,7 @@
 <?php
 
 return [
+
     /*
     |--------------------------------------------------------------------------
     | Cross-Origin Resource Sharing (CORS) Configuration
@@ -17,8 +18,12 @@ return [
 
     'allowed_methods' => ['*'],
 
-    // ✨ Your exact React URLs allowed to bypass the bouncer ✨
-    'allowed_origins' => ['*'],
+    // 🚨 THIS WAS THE FIX: No more '*' wildcard! We explicitly list your safe domains.
+    'allowed_origins' => [
+        'http://localhost:5173', 
+        'http://localhost:3000', 
+        'https://climbstracker.vercel.app'
+    ],
 
     'allowed_origins_patterns' => [],
 
@@ -30,4 +35,5 @@ return [
 
     // ✨ REQUIRED for Sanctum authentication and secure requests ✨
     'supports_credentials' => true,
+
 ];
