@@ -17,9 +17,10 @@ class Event extends Model
         'description',
         'type',
         'created_by',
-        'school',  // <--- ADD THIS
+        'school',  
         'course',
-        'audience'
+        'audience',
+        'is_pinned' // ✨ ADDED: Allows the pin status to be saved to the database
     ];
 
     /**

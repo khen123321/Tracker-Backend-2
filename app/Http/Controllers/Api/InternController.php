@@ -47,6 +47,9 @@ class InternController extends Controller
             }
             $intern->setAttribute('attendance_logs_sum_hours_rendered', $totalHours);
 
+            // ✨ NEW: Append the document URLs before sending to React
+            $intern = $this->appendDocumentUrls($intern);
+
             return response()->json(['status' => 'success', 'intern' => $intern ], 200);
         } catch (ModelNotFoundException $e) {
             return response()->json(['status' => 'error', 'message' => 'Intern not found in the database.'], 404);
@@ -65,6 +68,9 @@ class InternController extends Controller
                 ->where('id', $id)
                 ->orWhere('user_id', $id)
                 ->firstOrFail();
+
+            // ✨ NEW: Append the document URLs before sending to React
+            $intern = $this->appendDocumentUrls($intern);
 
             return response()->json([
                 'status' => 'success',
@@ -144,7 +150,13 @@ class InternController extends Controller
             $user->intern()->update(['has_' . $type => true]);
 
             ob_end_clean();
-            return response()->json(['message' => 'Success', 'path' => $path]);
+            
+            // ✨ FIX: Return "document_url" so the React UI updates instantly upon upload
+            return response()->json([
+                'message' => 'Success', 
+                'document_url' => url('storage/' . $path)
+            ]);
+            
         } catch (\Throwable $e) {
             ob_end_clean();
             return response()->json(['error' => $e->getMessage()], 500);
@@ -187,36 +199,29 @@ class InternController extends Controller
 
     /**
      * Fetch statistics for the HR Dashboard (Interns by School)
-     * Hardened version based on raw database dump.
      */
     public function getSchoolStats()
     {
         try {
-            // Grab all interns directly
             $stats = Intern::all()
                 ->groupBy(function($intern) {
                     
-                    // 1. Safely check if the "school" text column has a value (like your Row #1)
                     $schoolText = $intern->getAttributes()['school'] ?? null;
                     if (!empty($schoolText) && is_string($schoolText)) {
                         return $schoolText;
                     }
 
-                    // 2. If text is NULL, check the "school_id" column (like your Rows #19-22)
                     if (!empty($intern->school_id)) {
-                        // Try to find the actual name in the schools table
                         $schoolRecord = \App\Models\School::find($intern->school_id);
                         if ($schoolRecord && !empty($schoolRecord->name)) {
                             return $schoolRecord->name;
                         }
                         
-                        // 3. FAILSAFE: If school_id is 1 but the schools table is empty/broken
                         if ($intern->school_id == 1) {
                             return 'USTP'; 
                         }
                     }
 
-                    // 4. Truly empty
                     return 'Unassigned / Other';
                 })
                 ->map(function($group, $schoolName) {
@@ -225,11 +230,9 @@ class InternController extends Controller
                         'value' => $group->count()
                     ];
                 })
-                // 👉 HIDE the unassigned ones so the chart looks clean
                 ->reject(function($item) {
                     return $item['name'] === 'Unassigned / Other';
                 })
-                // Sort by highest count first, then re-index the array
                 ->sortByDesc('value')
                 ->values(); 
 
@@ -243,5 +246,40 @@ class InternController extends Controller
                 'error' => $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * ✨ NEW HELPER FUNCTION ✨
+     * Dynamically finds the exact file path for the intern's documents 
+     * and attaches them to the JSON response as `{type}_url`
+     */
+    private function appendDocumentUrls($intern)
+    {
+        $types = ['resume', 'moa', 'endorsement', 'nda', 'pledge'];
+        
+        // Grab all files in the documents folder once to optimize performance
+        $files = Storage::disk('public')->files('documents');
+
+        foreach ($types as $type) {
+            $hasField = 'has_' . $type;
+            $url = null;
+
+            // If the database says they uploaded a document, find its exact link
+            if ($intern->$hasField) {
+                foreach ($files as $file) {
+                    // Check if file starts with 'intern_14_resume.' 
+                    // This allows us to grab it regardless of whether it's a .pdf, .jpg, or .png
+                    if (str_starts_with(basename($file), "intern_{$intern->id}_{$type}.")) {
+                        $url = url('storage/' . $file);
+                        break;
+                    }
+                }
+            }
+
+            // Append it to the intern object (e.g., $intern->resume_url = 'http://...')
+            $intern->setAttribute("{$type}_url", $url);
+        }
+
+        return $intern;
     }
 }

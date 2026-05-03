@@ -2,15 +2,17 @@
 
 namespace App\Models;
 
-// use Illuminate\Contracts\Auth\MustVerifyEmail;
+use Illuminate\Contracts\Auth\MustVerifyEmail; // ✨ 1. UNCOMMENTED THIS LINE!
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
-use Laravel\Sanctum\HasApiTokens; // 👈 Crucial for your API login!
+use Laravel\Sanctum\HasApiTokens; 
+use Illuminate\Database\Eloquent\SoftDeletes; 
 
-class User extends Authenticatable
+// ✨ 2. ADDED "implements MustVerifyEmail" RIGHT HERE!
+class User extends Authenticatable implements MustVerifyEmail
 {
-    use HasApiTokens, HasFactory, Notifiable;
+    use HasApiTokens, HasFactory, Notifiable, SoftDeletes;
 
     /**
      * The attributes that are mass assignable.
@@ -25,7 +27,9 @@ class User extends Authenticatable
         'school_id',
         'branch_id',
         'department_id',
-        'permissions'    // ✨ ADDED: Prevents crashes when updating HR access
+        'permissions',   // Prevents crashes when updating HR access
+        'created_by',
+        'email_verified_at'     // Required to track who created the account
     ];
 
     /**
@@ -42,7 +46,7 @@ class User extends Authenticatable
     protected $casts = [
         'email_verified_at' => 'datetime',
         'password' => 'hashed',
-        'permissions' => 'array', 
+        'permissions' => 'array', // CRITICAL: Tells Laravel to treat this as an array
     ];
 
     // ==========================================
@@ -66,20 +70,21 @@ class User extends Authenticatable
 
     public function intern()
     {
-        // If your 'interns' table connects to the user using 'user_id', leave this. 
-        // If it uses 'intern_id', change the second parameter!
         return $this->hasOne(Intern::class, 'user_id'); 
     }
 
     public function attendance_logs()
     {
-        // We tell Laravel specifically to look for 'intern_id' instead of 'user_id'
         return $this->hasMany(AttendanceLog::class, 'intern_id');
     }
 
-    // ✨ NEW: Tells Laravel this user can have many form requests ✨
     public function internRequests()
     {
         return $this->hasMany(InternRequest::class, 'user_id');
+    }
+
+    public function creator()
+    {
+        return $this->belongsTo(User::class, 'created_by');
     }
 }

@@ -1,51 +1,31 @@
 <?php
 
-namespace App\Notifications;
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
 
-use Illuminate\Bus\Queueable;
-use Illuminate\Notifications\Notification;
-
-class InternRequestProcessedAlert extends Notification
+return new class extends Migration
 {
-    use Queueable;
-
-    protected $internRequest;
-
     /**
-     * Create a new notification instance.
+     * Run the migrations.
      */
-    public function __construct($internRequest)
+    public function up(): void
     {
-        $this->internRequest = $internRequest;
+        Schema::table('interns', function (Blueprint $table) {
+            // Add your missing file columns here, for example:
+            // $table->string('moa_file')->nullable();
+            // $table->string('nda_file')->nullable();
+        });
     }
 
     /**
-     * We only want to save this to the database so it shows up in their Notification Bell.
+     * Reverse the migrations.
      */
-    public function via($notifiable)
+    public function down(): void
     {
-        return ['database'];
+        Schema::table('interns', function (Blueprint $table) {
+            // Drop the columns here if you rollback:
+            // $table->dropColumn(['moa_file', 'nda_file']);
+        });
     }
-
-    /**
-     * Get the array representation of the notification.
-     */
-    public function toArray($notifiable)
-    {
-        $status = $this->internRequest->status;
-        $date = \Carbon\Carbon::parse($this->internRequest->date_of_absence)->format('M d, Y');
-        
-        // Format the message based on approval or rejection
-        $message = $status === 'Approved' 
-            ? "Your request for {$date} has been approved."
-            : "Your request for {$date} has been rejected by HR.";
-
-        return [
-            'type' => 'request_update',
-            'title' => "Request {$status}",
-            'message' => $message,
-            'request_id' => $this->internRequest->id,
-            'date_of_absence' => $this->internRequest->date_of_absence,
-        ];
-    }
-} 
+};

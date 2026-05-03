@@ -8,13 +8,13 @@ return new class extends Migration
 {
     public function up(): void
     {
-        // Drop the table if it already exists so it doesn't crash
+        // 1. Drop the old table if it exists to prevent crashing
         Schema::dropIfExists('notifications');
 
-        // Create the new, React-friendly table
+        // 2. Create the new, React-friendly table
         Schema::create('notifications', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('user_id')->constrained()->onDelete('cascade');
+            $table->foreignId('user_id')->constrained()->onDelete('cascade'); // Links to the user
             $table->string('title');
             $table->text('message');
             $table->string('type')->default('info');

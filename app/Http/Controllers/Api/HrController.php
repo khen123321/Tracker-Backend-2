@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use App\Models\User;
 use App\Models\Intern;
 use App\Models\AttendanceLog;
+use App\Models\ActivityLog; 
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Auth;
@@ -20,12 +21,17 @@ class HrController extends Controller
     public function getInternList(Request $request)
     {
         $targetDate = $request->date ? Carbon::parse($request->date)->toDateString() : Carbon::today()->toDateString();
+        $view = $request->query('view', 'active'); 
 
-        // 1. Get all interns
-        $interns = User::where('role', 'intern')
-            ->with(['intern.school', 'intern.department', 'intern.branch'])
-            ->get();
+        // 1. Base Query
+        $query = User::where('role', 'intern')
+            ->with(['intern.school', 'intern.department', 'intern.branch']);
 
+        if ($view === 'archived') {
+            $query->onlyTrashed(); 
+        }
+
+        $interns = $query->get();
         $internIds = $interns->pluck('intern.id')->filter()->toArray();
 
         // 2. Get today's logs and map them by Intern ID to prevent data duplication
@@ -56,13 +62,14 @@ class HrController extends Controller
                     }
                 };
 
-                // Map DB columns to keys expected by the React Main Table
                 $userLog->time_in_am = $formatTime($userLog->time_in);
                 $userLog->time_out_am = $formatTime($userLog->lunch_out);
                 $userLog->time_in_pm = $formatTime($userLog->lunch_in);
                 $userLog->time_out_pm = $formatTime($userLog->time_out);
             }
 
+            // Explicitly force these attributes so they don't get hidden
+            $user->setAttribute('name', $user->first_name . ' ' . $user->last_name);
             $user->setAttribute('attendance_logs', $userLog ? [$userLog] : []);
             $user->setAttribute('attendance_logs_sum_hours_rendered', $internId ? ($allTimeHours->get($internId) ?? 0) : 0);
 
@@ -76,9 +83,6 @@ class HrController extends Controller
        === CAMERA VERIFICATION METHODS === 
        ========================================================= */
 
-    /**
-     * Get logs specifically formatted for the Camera Verification Grid
-     */
     public function getVerificationLogs(Request $request)
     {
         $targetDate = $request->date ? Carbon::parse($request->date)->toDateString() : Carbon::today()->toDateString();
@@ -88,26 +92,19 @@ class HrController extends Controller
             ->whereDate('date', $targetDate);
 
         $logs = $query->get()->map(function ($log) {
-            $user = User::where('id', $log->intern->user_id)->first();
+            $user = User::withTrashed()->where('id', $log->intern->user_id)->first(); 
 
             return [
                 'id' => $log->id,
                 'intern_name' => $user ? $user->first_name . ' ' . $user->last_name : 'Unknown Intern',
                 'department' => $user->assigned_department ?? 'N/A',
                 'is_flagged' => $log->is_flagged,
-                
-                // ✨ PULL CUSTOM HR REASON FROM THE DATABASE NOTES COLUMN ✨
                 'flag_reason' => $log->notes, 
-                
                 'status' => $log->status,
-                
-                // RAW TIMES
                 'time_in' => $log->time_in,
                 'lunch_out' => $log->lunch_out,
                 'lunch_in' => $log->lunch_in,
                 'time_out' => $log->time_out,
-
-                // 📸 IMAGE MAPPING: These match your database column names exactly
                 'image_in' => $log->image_in ?? $log->time_in_selfie,
                 'lunch_out_selfie' => $log->lunch_out_selfie,
                 'lunch_in_selfie' => $log->lunch_in_selfie,
@@ -122,9 +119,6 @@ class HrController extends Controller
         return response()->json($logs);
     }
 
-    /**
-     * Verify or Reject a specific attendance log
-     */
     public function verifyAttendanceAction(Request $request, $id)
     {
         try {
@@ -132,15 +126,12 @@ class HrController extends Controller
             
             if ($request->action === 'reject') {
                 $log->is_flagged = 1;
-                
-                // Save the reason so the intern gets the notification
                 $log->notes = $request->reason ?? 'Rejected manually by HR Admin.';
                 
-                // ✨ STRICT RULE: "Time will not be recorded"
                 if ($log->time_out) {
                     $log->time_out = null;
                     $log->image_out = null;
-                    $log->hours_rendered = 0; // Wipe the calculated hours
+                    $log->hours_rendered = 0; 
                 } elseif ($log->lunch_in) {
                     $log->lunch_in = null;
                     $log->lunch_in_selfie = null;
@@ -150,24 +141,40 @@ class HrController extends Controller
                 } elseif ($log->time_in) {
                     $log->time_in = null;
                     $log->image_in = null;
-                    // 🛑 We removed the $log->status = 'pending'; line here to prevent the MySQL crash!
                 }
                 
                 $log->save();
+
+                ActivityLog::create([
+                    'user_id' => Auth::id(),
+                    'action' => 'Rejected Attendance',
+                    'description' => "Rejected attendance log #{$id}."
+                ]);
             }
             
             return response()->json(['message' => 'Attendance flagged and time removed successfully']);
         } catch (\Exception $e) {
-            return response()->json([
-                'message' => 'Backend Error',
-                'error' => $e->getMessage()
-            ], 500);
+            return response()->json(['message' => 'Backend Error', 'error' => $e->getMessage()], 500);
         }
     }
 
     /* =========================================================
        === ADMINISTRATIVE & BULK METHODS === 
        ========================================================= */
+
+    public function getActivityLogs(Request $request)
+    {
+        if ($request->user()->role !== 'superadmin') {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $logs = ActivityLog::with('user:id,first_name,last_name,role')
+            ->orderBy('created_at', 'desc')
+            ->take(100) 
+            ->get();
+
+        return response()->json($logs);
+    }
 
     public function getAllUsers()
     {
@@ -182,20 +189,29 @@ class HrController extends Controller
         
         $validated = $request->validate([
             'first_name' => 'required|string|max:255', 
-            'last_name' => 'required|string|max:255', 
-            'email' => 'required|email|unique:users,email', 
-            'password' => 'required|min:6', 
-            'role' => 'required|in:hr_intern,hr,superadmin'
+            'last_name'  => 'required|string|max:255', 
+            'email'      => 'required|email|unique:users,email', 
+            'password'   => 'required|min:6', 
+            'role'       => 'required|in:hr_intern,hr,superadmin',
+            'branch_id'  => 'nullable|exists:branches,id'
         ]);
 
         $user = User::create([
-            'first_name' => $validated['first_name'],
-            'last_name' => $validated['last_name'],
-            'email' => $validated['email'],
-            'password' => Hash::make($validated['password']),
-            'role' => $validated['role'],
-            'status' => 'active',
-            'permissions' => [] 
+            'first_name'  => $validated['first_name'],
+            'last_name'   => $validated['last_name'],
+            'email'       => $validated['email'],
+            'password'    => Hash::make($validated['password']),
+            'role'        => $validated['role'],
+            'status'      => 'active',
+            'permissions' => [],
+            'branch_id'   => $validated['branch_id'] ?? null,
+            'created_by'  => Auth::id() 
+        ]);
+
+        ActivityLog::create([
+            'user_id' => Auth::id(),
+            'action' => 'Created Staff Account',
+            'description' => "Created a new {$validated['role']} account for {$validated['email']}."
         ]);
 
         return response()->json(['message' => 'Account created successfully!'], 201);
@@ -222,24 +238,39 @@ class HrController extends Controller
         $user->status = $request->status;
         $user->save();
 
+        ActivityLog::create([
+            'user_id' => Auth::id(),
+            'action' => 'Updated User Status/Role',
+            'description' => "Changed role to {$request->role} and status to {$request->status} for {$user->email}."
+        ]);
+
         return response()->json(['message' => 'User updated successfully!', 'user' => $user]);
     }
 
     public function getRoleUsers()
     {
-        $users = User::whereIn('role', ['hr', 'hr_intern', 'superadmin'])
-            ->select('id', 'first_name', 'last_name', 'email', 'role', 'permissions', 'assigned_department')
-            ->get();
-            
-        $users->transform(function ($user) {
-            $user->name = $user->first_name . ' ' . $user->last_name;
-            $user->department = $user->assigned_department ?? 'HR Department';
-            
-            if (!$user->permissions) {
-                $user->permissions = [];
-            }
-            return $user;
-        });
+        $users = User::with(['branch', 'creator'])
+            ->whereIn('role', ['hr', 'hr_intern', 'superadmin'])
+            ->get()
+            ->map(function ($user) {
+                return [
+                    'id'                => $user->id,
+                    'name'              => $user->first_name . ' ' . $user->last_name,
+                    'first_name'        => $user->first_name,
+                    'last_name'         => $user->last_name,
+                    'email'             => $user->email,
+                    'role'              => $user->role,
+                    
+                    // ✨ ADDED THESE TWO LINES TO FIX THE VISIBILITY ✨
+                    'status'            => $user->status,
+                    'email_verified_at' => $user->email_verified_at ? $user->email_verified_at->format('M j, Y, g:i a') : null,
+                    
+                    'permissions'       => $user->permissions ?? [],
+                    'branch_name'       => $user->branch ? $user->branch->name : 'All Branches (HQ)',
+                    'created_by'        => $user->creator ? ($user->creator->first_name . ' ' . $user->creator->last_name) : 'System Default',
+                    'created_at'        => $user->created_at ? $user->created_at->format('F j, Y, g:i a') : 'N/A',
+                ];
+            });
 
         return response()->json($users);
     }
@@ -257,6 +288,12 @@ class HrController extends Controller
             'permissions' => $request->permissions ?? [],
         ]);
 
+        ActivityLog::create([
+            'user_id' => Auth::id(),
+            'action' => 'Modified Access Limits',
+            'description' => "Updated panel permissions for {$user->email}."
+        ]);
+
         return response()->json([
             'message' => 'Access updated successfully!',
             'user' => $user
@@ -268,12 +305,23 @@ class HrController extends Controller
         $interns = User::where('role', 'intern')
             ->with('intern') 
             ->withSum('attendance_logs', 'hours_rendered') 
-            ->select('id', 'first_name', 'last_name', 'email', 'status')
+            ->select('id', 'first_name', 'last_name', 'email', 'status', 'email_verified_at', 'role')
             ->get();
             
         $interns->transform(function ($user) {
-            $user->name = $user->first_name . ' ' . $user->last_name;
-            return $user;
+            // ✨ Explicitly mapping the exact fields React needs
+            return [
+                'id' => $user->id,
+                'name' => $user->first_name . ' ' . $user->last_name,
+                'first_name' => $user->first_name,
+                'last_name' => $user->last_name,
+                'email' => $user->email,
+                'status' => $user->status,
+                'email_verified_at' => $user->email_verified_at ? $user->email_verified_at->format('M j, Y, g:i a') : null,
+                'role' => $user->role,
+                'attendance_logs_sum_hours_rendered' => $user->attendance_logs_sum_hours_rendered,
+                'intern' => $user->intern
+            ];
         });
 
         return response()->json($interns);
@@ -297,13 +345,19 @@ class HrController extends Controller
             'has_nda' => $request->has_nda,
         ]);
 
+        ActivityLog::create([
+            'user_id' => Auth::id(),
+            'action' => 'Updated Intern Assignment',
+            'description' => "Updated branch/department assignments for intern {$intern->email}."
+        ]);
+
         return response()->json([
             'message' => 'Intern assignment updated successfully!',
             'intern' => $intern
         ]);
     }
 
-    public function bulkRemove(Request $request)
+    public function bulkArchive(Request $request)
     {
         $request->validate([
             'ids' => 'required|array',
@@ -313,13 +367,47 @@ class HrController extends Controller
         DB::beginTransaction();
         try {
             $userIds = $request->ids;
-            Intern::whereIn('user_id', $userIds)->delete();
+            
             User::whereIn('id', $userIds)->delete();
+            
+            ActivityLog::create([
+                'user_id' => Auth::id(),
+                'action' => 'Bulk Archived Interns',
+                'description' => "Archived " . count($userIds) . " intern account(s)."
+            ]);
+
             DB::commit();
-            return response()->json(['message' => count($userIds) . ' interns removed successfully.']);
+            return response()->json(['message' => count($userIds) . ' intern(s) archived successfully.']);
         } catch (\Exception $e) {
             DB::rollBack();
-            return response()->json(['message' => 'Failed to remove interns.', 'error' => $e->getMessage()], 500);
+            return response()->json(['message' => 'Failed to archive interns.', 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    public function bulkRestore(Request $request)
+    {
+        $request->validate([
+            'ids' => 'required|array',
+            'ids.*' => 'required|integer' 
+        ]);
+
+        DB::beginTransaction();
+        try {
+            $userIds = $request->ids;
+            
+            User::withTrashed()->whereIn('id', $userIds)->restore();
+            
+            ActivityLog::create([
+                'user_id' => Auth::id(),
+                'action' => 'Bulk Restored Interns',
+                'description' => "Restored " . count($userIds) . " intern account(s) to active status."
+            ]);
+
+            DB::commit();
+            return response()->json(['message' => count($userIds) . ' intern(s) restored successfully.']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['message' => 'Failed to restore interns.', 'error' => $e->getMessage()], 500);
         }
     }
 
@@ -328,8 +416,9 @@ class HrController extends Controller
         $request->validate([
             'intern_ids' => 'required|array',
             'date' => 'required|date',
-            'time_in' => 'required',
-            'time_out' => 'required',
+            'input_type' => 'required|in:time,full_day',
+            'time_in' => 'nullable|required_if:input_type,time',
+            'time_out' => 'nullable|required_if:input_type,time',
         ]);
 
         DB::beginTransaction();
@@ -338,10 +427,26 @@ class HrController extends Controller
                 $intern = Intern::where('user_id', $userId)->first();
                 
                 if ($intern) {
-                    $timeIn = Carbon::parse($request->date . ' ' . $request->time_in);
-                    $timeOut = Carbon::parse($request->date . ' ' . $request->time_out);
                     
-                    $newHours = round($timeIn->diffInMinutes($timeOut) / 60, 2);
+                    if ($request->input_type === 'full_day') {
+                        $timeIn = Carbon::parse($request->date . ' 08:00:00');
+                        $timeOut = Carbon::parse($request->date . ' 17:00:00');
+                        $newHours = 8;
+                    } 
+                    else {
+                        $timeIn = Carbon::parse($request->date . ' ' . $request->time_in);
+                        $timeOut = Carbon::parse($request->date . ' ' . $request->time_out);
+                        
+                        $newHours = round($timeIn->diffInMinutes($timeOut) / 60, 2);
+                        
+                        $noon = Carbon::parse($request->date . ' 12:00:00');
+                        $onePM = Carbon::parse($request->date . ' 13:00:00');
+                        
+                        if ($timeIn->lessThanOrEqualTo($noon) && $timeOut->greaterThanOrEqualTo($onePM)) {
+                            $newHours -= 1;
+                        }
+                    }
+                    
                     $noteAddition = trim(($request->reason ?? '') . ' ' . ($request->notes ?? ''));
 
                     $existingLog = AttendanceLog::where('intern_id', $intern->id)
@@ -368,6 +473,12 @@ class HrController extends Controller
                 }
             }
             
+            ActivityLog::create([
+                'user_id' => Auth::id(),
+                'action' => 'Bulk Added Hours',
+                'description' => "Manually added hours for " . count($request->intern_ids) . " intern(s) on {$request->date}."
+            ]);
+
             DB::commit();
             return response()->json(['message' => 'Hours added successfully to selected interns.']);
         } catch (\Exception $e) {
@@ -382,7 +493,7 @@ class HrController extends Controller
             'ids' => 'required|array'
         ]);
 
-        $users = User::with('intern')->whereIn('id', $request->ids)->get();
+        $users = User::withTrashed()->with('intern')->whereIn('id', $request->ids)->get();
         $fileName = 'Interns_Export_' . date('Y-m-d') . '.csv';
         
         $headers = array(
@@ -394,6 +505,12 @@ class HrController extends Controller
         );
 
         $columns = ['ID', 'First Name', 'Last Name', 'Email', 'Role', 'Status'];
+
+        ActivityLog::create([
+            'user_id' => Auth::id(),
+            'action' => 'Exported Intern Data',
+            'description' => "Exported CSV data for " . count($request->ids) . " intern(s)."
+        ]);
 
         $callback = function() use($users, $columns) {
             $file = fopen('php://output', 'w');

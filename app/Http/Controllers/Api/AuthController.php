@@ -14,6 +14,7 @@ class AuthController extends Controller
 {
     public function login(Request $request)
     {
+        // Combined validation rules
         $request->validate([
             'email' => 'required|email',
             'password' => 'required',
@@ -22,11 +23,26 @@ class AuthController extends Controller
 
         $user = User::where('email', $request->email)->first();
 
+        // 1. Check if user exists and password is correct
         if (!$user || !Hash::check($request->password, $user->password)) {
             return response()->json(['message' => 'Invalid email or password.'], 401);
         }
 
-        // --- ROLE VALIDATION ---
+        // 2. ✨ THE BOUNCER (With VIP Pass)
+        // We only block the user if they are NOT a superadmin AND have no verification stamp.
+        if ($user->role !== 'superadmin' && !$user->hasVerifiedEmail()) {
+            return response()->json([
+                'message' => 'Your email address is not verified.',
+                'not_verified' => true 
+            ], 403); // 403 means "Forbidden"
+        }
+
+        // 3. Check if account is active
+        if ($user->status !== 'active') {
+            return response()->json(['message' => 'Your account is currently inactive.'], 403);
+        }
+
+        // 4. --- ROLE VALIDATION ---
         if ($request->role === 'hr') {
             if ($user->role !== 'hr' && $user->role !== 'hr_intern' && $user->role !== 'superadmin') {
                 return response()->json(['message' => 'Access denied. Privileged account required.'], 403);
@@ -38,6 +54,7 @@ class AuthController extends Controller
             }
         }
 
+        // If everything is fine, issue the token
         $token = $user->createToken('auth_token')->plainTextToken;
 
         // 🛡️ SAFETY NET: Ensure permissions is always an array
@@ -45,6 +62,7 @@ class AuthController extends Controller
 
         return response()->json([
             'access_token' => $token,
+            'token_type' => 'Bearer',
             'user' => $user,
             'role' => $user->role
         ]);
@@ -70,12 +88,12 @@ class AuthController extends Controller
                 'email' => $request->email,
                 'password' => Hash::make($request->password),
                 'role' => 'intern',
-                'status' => 'active',
+                // ✨ FIX: Set to inactive until they verify!
+                'status' => 'inactive', 
                 'permissions' => [], 
             ]);
 
-            // 👇 THE FIX: Using `$request->filled()` ensures we catch empty strings ("") from React!
-            // We also check multiple possible variable names just in case the React form uses different keys.
+            // Using `$request->filled()` ensures we catch empty strings ("") from React!
             $actualSchoolId = $request->filled('school_id') ? $request->school_id : ($request->school ?: 1);
             $actualDeptId = $request->filled('department_id') ? $request->department_id : ($request->assigned_department ?: 1);
             $actualBranchId = $request->filled('branch_id') ? $request->branch_id : ($request->assigned_branch ?: 1);
@@ -95,7 +113,6 @@ class AuthController extends Controller
                 'course' => $actualCourse, 
                 'school' => $request->school_university ?? $request->school ?? 'N/A',
                 
-                // 👇 Fixed assignment of relationships
                 'school_id' => $actualSchoolId,
                 'branch_id' => $actualBranchId,
                 'department_id' => $actualDeptId,
@@ -112,12 +129,13 @@ class AuthController extends Controller
 
             DB::commit();
 
-            $token = $user->createToken('auth_token')->plainTextToken;
+            // ✨ THE FIX: Force the email to send directly bypassing invisible events! ✨
+            $user->sendEmailVerificationNotification();
 
+            // ✨ We return requires_verification: true so React shows the correct screen ✨
             return response()->json([
-                'message' => 'User registered successfully',
-                'access_token' => $token,
-                'user' => $user
+                'message' => 'Registration successful! Please check your email to verify your account.',
+                'requires_verification' => true
             ], 201);
 
         } catch (\Exception $e) {

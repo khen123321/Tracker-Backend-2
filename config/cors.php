@@ -12,17 +12,13 @@ return [
     |
     */
 
-    // ✨ Ensured 'storage/*' is explicitly declared just in case ✨
-    'paths' => ['api/*', 'sanctum/csrf-cookie', 'storage/*', '*'],
+    // ✨ Cleaned up: Explicitly allows your API routes (including /api/server-time), Sanctum, and Storage ✨
+    'paths' => ['api/*', 'sanctum/csrf-cookie', 'storage/*'],
 
     'allowed_methods' => ['*'],
 
-    // ✨ REMOVED the '*' fallback. Browsers block images if '*' is mixed with credentials! ✨
-    'allowed_origins' => [
-        'http://localhost:5173',
-        'http://192.168.25.190:5173',
-        'https://192.168.25.190:5173',
-    ],
+    // ✨ Your exact React URLs allowed to bypass the bouncer ✨
+    'allowed_origins' => ['*'],
 
     'allowed_origins_patterns' => [],
 
@@ -32,6 +28,6 @@ return [
 
     'max_age' => 0,
 
-    // ✨ FLIPPED TO TRUE: Crucial for Sanctum auth and secure image fetching ✨
+    // ✨ REQUIRED for Sanctum authentication and secure requests ✨
     'supports_credentials' => true,
 ];

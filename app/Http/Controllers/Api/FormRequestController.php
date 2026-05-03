@@ -16,6 +16,45 @@ use Illuminate\Support\Facades\Storage; // ✨ ADDED FOR FILE UPLOADS
 class FormRequestController extends Controller
 {
     /**
+     * ✨ HR: Fetch all requests for the HR Dashboard ✨
+     * (NEW FUNCTION ADDED FOR THE REACT DASHBOARD)
+     */
+    public function index()
+    {
+        try {
+            // Fetch all requests and map them so the data structure matches 
+            // what the React frontend expects (e.g., mapping user to intern.user)
+            $requests = InternRequest::orderBy('created_at', 'desc')->get()->map(function($req) {
+                $user = User::find($req->user_id);
+                return [
+                    'id'                 => $req->id,
+                    'type'               => $req->type,
+                    'target_date'        => $req->date_of_absence, // Mapped for React
+                    'reason'             => $req->reason,
+                    'additional_details' => $req->additional_details,
+                    'status'             => strtolower($req->status), // Ensure lowercase for frontend badge classes
+                    'attachment_path'    => $req->attachment_path,
+                    // Mocking the 'intern.user' structure so the frontend table doesn't crash
+                    'intern' => [
+                        'user' => [
+                            'first_name' => $user ? $user->first_name : 'Unknown',
+                            'last_name'  => $user ? $user->last_name : '',
+                        ]
+                    ]
+                ];
+            });
+
+            return response()->json(['data' => $requests]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Failed to load requests',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * ✨ INTERN: Submits a Form Request (NOW WITH ATTACHMENTS) ✨
      */
     public function store(Request $request)
@@ -95,8 +134,10 @@ class FormRequestController extends Controller
      */
     public function processRequest(Request $request, $id)
     {
+        // Support both old 'action' payload and new 'status' payload
         $request->validate([
-            'action' => 'required|in:approve,reject'
+            'action' => 'nullable|in:approve,reject',
+            'status' => 'nullable|in:approved,rejected'
         ]);
 
         try {
@@ -104,11 +145,17 @@ class FormRequestController extends Controller
             $internRequest = InternRequest::findOrFail($id);
             
             // 1. Update the Status
-            if ($request->action === 'approve') {
-                $internRequest->status = 'Approved';
+            if ($request->status) {
+                // Read from new React Payload
+                $internRequest->status = ucfirst($request->status); // 'Approved' or 'Rejected'
             } else {
-                $internRequest->status = 'Rejected';
+                // Read from legacy payload
+                $internRequest->status = $request->action === 'approve' ? 'Approved' : 'Rejected';
             }
+            
+            // Note: If you want to save $request->remarks to the database, 
+            // you would need to add an 'hr_remarks' column to your intern_requests table.
+            
             $internRequest->save();
 
             // 2. ✨ THE NUCLEAR FIX: Force the notification straight into the database ✨
@@ -148,6 +195,29 @@ class FormRequestController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'message' => 'Failed to process request',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * ✨ HR: Download attached file ✨
+     * (NEW FUNCTION ADDED FOR THE REACT DASHBOARD)
+     */
+    public function download($id)
+    {
+        try {
+            $internRequest = InternRequest::findOrFail($id);
+            
+            if (!$internRequest->attachment_path) {
+                return response()->json(['message' => 'No file found'], 404);
+            }
+
+            return Storage::disk('public')->download($internRequest->attachment_path);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Error downloading file',
                 'error' => $e->getMessage()
             ], 500);
         }
