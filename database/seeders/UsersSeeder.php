@@ -16,7 +16,8 @@ class UsersSeeder extends Seeder
                 'last_name'   => 'Verson',
                 'first_name'  => 'Khen Joshua',
                 'middle_name' => 'G.',
-                'email'       => 'testadmin123@gmail.com   ',
+                // FIXED: Removed the trailing spaces
+                'email'       => 'testadmin123@gmail.com',
                 'password'    => Hash::make('testadmin123'), 
                 'role'        => 'superadmin', // Full system access
                 'status'      => 'active',
