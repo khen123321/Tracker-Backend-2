@@ -2,36 +2,33 @@
 
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Artisan;
-use Illuminate\Support\Facades\DB;
 
 Route::get('/', function () {
     return view('welcome');
 });
 
 // =====================================================================
-// TEMPORARY SECURE MIGRATION & TEST ROUTE
+// THE "NUKE & PAVE" DATABASE ROUTE
 // =====================================================================
 Route::get('/run-secret-migrations-2026', function () {
     try {
-        // Step 1: Explicitly test the database connection first
-        DB::connection()->getPdo();
+        // 1. Wipe Laravel's memory so it sees the new PostgreSQL settings
+        Artisan::call('config:clear');
+        Artisan::call('cache:clear');
 
-        // Step 2: If connection works, run the migrations
-        Artisan::call('migrate', ['--force' => true]);
+        // 2. Wipe the database and rebuild it perfectly with your updated migration
+        Artisan::call('migrate:fresh', ['--force' => true]);
         
         return response()->json([
             'status' => 'success',
-            'message' => 'Database tables built successfully! You can now log in.',
+            'message' => 'Cache cleared and Postgres tables built successfully!',
             'output' => Artisan::output()
         ]);
 
     } catch (\Throwable $e) {
-        // \Throwable catches EVERYTHING, preventing a silent 500 crash
         return response()->json([
             'status'  => 'error',
-            'message' => 'CRITICAL ERROR: ' . $e->getMessage(),
-            'file'    => $e->getFile(),
-            'line'    => $e->getLine()
+            'message' => 'CRITICAL ERROR: ' . $e->getMessage()
         ]);
     }
 });
