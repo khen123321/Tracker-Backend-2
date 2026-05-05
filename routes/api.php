@@ -4,7 +4,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Mail; // ✨ ADDED FOR EMAIL TESTING
+use Illuminate\Support\Facades\Mail; 
 use App\Models\User;
 use App\Models\School;
 use App\Models\Department;
@@ -25,6 +25,7 @@ use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\AnnouncementController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\Api\NotificationController;
+use App\Http\Controllers\Api\PasswordResetController; // ✨ ADDED FOR PASSWORD RESET
 
 use Exception;
 
@@ -45,14 +46,17 @@ Route::get('/server-time', function () {
     ]);
 });
 
-// ✨ THE UNIFIED VERIFICATION ROUTE ✨
+// ✨ THE UNIFIED VERIFICATION ROUTE (SPA OPTIMIZED) ✨
 Route::get('/email/verify/{id}/{hash}', function (Request $request, $id, $hash) {
+    // 1. Check if the URL was tampered with or expired
     if (!$request->hasValidSignature()) {
         return response()->json(['message' => 'Invalid or expired verification link.'], 401);
     }
 
+    // 2. Find the user
     $user = User::findOrFail($id);
 
+    // 3. Mark as verified if not already
     if (!$user->hasVerifiedEmail()) {
         $user->email_verified_at = now(); 
         $user->status = 'active';        
@@ -68,6 +72,11 @@ Route::group(['prefix' => 'auth'], function () {
     Route::post('/register', [AuthController::class, 'register']);
     Route::post('/login',    [AuthController::class, 'login']);
 });
+
+// ✨ FORGOT & RESET PASSWORD ROUTES ✨
+Route::post('/forgot-password', [PasswordResetController::class, 'sendResetLink']);
+Route::post('/reset-password', [PasswordResetController::class, 'resetPassword'])->name('password.reset');
+
 
 Route::get('/hr/dashboard-stats', [DashboardController::class, 'getStats']);
 

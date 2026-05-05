@@ -8,18 +8,19 @@ return new class extends Migration
 {
     public function up(): void
     {
-        // Drop the table if it already exists so it doesn't crash
+        // Drop the table if it already exists to start fresh
         Schema::dropIfExists('notifications');
 
-        // Create the new, React-friendly table
+        // Create the official Laravel Polymorphic table
         Schema::create('notifications', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('user_id')->constrained()->onDelete('cascade');
-            $table->string('title');
-            $table->text('message');
-            $table->string('type')->default('info');
+            $table->uuid('id')->primary();
+            $table->string('type');
+            
+            // ✨ THE FIX: This single line creates both notifiable_id and notifiable_type
+            $table->morphs('notifiable'); 
+            
+            $table->text('data');
             $table->timestamp('read_at')->nullable();
-            $table->json('data')->nullable(); 
             $table->timestamps();
         });
     }

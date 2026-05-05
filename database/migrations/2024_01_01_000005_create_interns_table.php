@@ -10,10 +10,12 @@ return new class extends Migration
     {
         Schema::create('interns', function (Blueprint $table) {
             $table->id();
+            
+            // --- THE FIX: Changed restrict to cascade ---
             $table->foreignId('user_id')->constrained()->onDelete('cascade');
-            $table->foreignId('school_id')->constrained()->onDelete('restrict');
-            $table->foreignId('branch_id')->constrained()->onDelete('restrict');
-            $table->foreignId('department_id')->constrained()->onDelete('restrict');
+            $table->foreignId('school_id')->constrained()->onDelete('cascade');
+            $table->foreignId('branch_id')->constrained()->onDelete('cascade');
+            $table->foreignId('department_id')->constrained()->onDelete('cascade');
 
             // Academic info
             $table->string('course');
