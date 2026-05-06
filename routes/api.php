@@ -180,6 +180,10 @@ Route::middleware('auth:sanctum')->group(function () {
     // ── HR Settings ───────────────────────────────────────────────────────────
     Route::get('/hr/settings/requirements',          [SettingsController::class, 'getRequirements']);
     Route::post('/hr/settings/requirements',         [SettingsController::class, 'storeRequirement']);
+    
+    // ✨ ADDED THIS PUT ROUTE TO FIX YOUR ERROR ✨
+    Route::put('/hr/settings/requirements/{id}',     [SettingsController::class, 'updateRequirement']);
+    
     Route::delete('/hr/settings/requirements/{id}',  [SettingsController::class, 'deleteRequirement']);
     Route::get('/hr/settings/schools',               [SettingsController::class, 'getSchools']);
 

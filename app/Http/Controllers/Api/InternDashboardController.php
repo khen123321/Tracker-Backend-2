@@ -15,7 +15,7 @@ class InternDashboardController extends Controller
         date_default_timezone_set('Asia/Manila');
         $user = $request->user();
         
-        // 1. Get the Intern profile (Removed the with('course') since it doesn't exist)
+        // 1. Get the Intern profile 
         $intern = Intern::where('user_id', $user->id)->first();
 
         if (!$intern) {
@@ -62,10 +62,13 @@ class InternDashboardController extends Controller
         $weekDaysPresent = $weekLogs->count(); 
         $weekHoursRendered = $weekLogs->sum('hours_rendered') + ($isCurrentlyClockedIn ? $todayHours : 0);
 
-        // 6. PROGRESS & COMPLETION
-        // 👇 The FIX: Uses your actual database column -> required_hours 👇
+        // 6. PROGRESS, COMPLETION & ✨ TENTATIVE DAYS ✨
         $requiredHours = $intern->required_hours ?? 0;
         
+        // Safe fallbacks
+        $remainingHours = 0;
+        $daysLeft = 0;
+
         if ($requiredHours > 0) {
             $remainingHours = max(0, $requiredHours - $actualProgressTotal);
             $daysLeft = ceil($remainingHours / 8); 
@@ -76,9 +79,12 @@ class InternDashboardController extends Controller
             $completionDate = 'No hours required';
         }
 
+        // 7. RETURN COMPLETE DATA PAYLOAD
         return response()->json([
             'totalHoursRequired' => (float)$requiredHours,
             'hoursRendered'      => (float)round($actualProgressTotal, 1),
+            'remainingHours'     => (float)round($remainingHours, 1),
+            'tentativeDays'      => (int)$daysLeft,
             'completionDate'     => $completionDate,
             'todayStatus'        => $todayStatus,
             'todayClockIn'       => $todayClockIn,

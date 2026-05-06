@@ -69,6 +69,36 @@ class SettingsController extends Controller
         ], 201);
     }
 
+    /**
+     * ✨ NEW: Update an existing requirement rule ✨
+     */
+    public function updateRequirement(Request $request, $id)
+    {
+        // 1. Find the specific requirement
+        $requirement = RequirementSetting::find($id);
+
+        if (!$requirement) {
+            return response()->json(['message' => 'Requirement not found'], 404);
+        }
+
+        // 2. Validate the incoming data 
+        // ('sometimes' means it will only validate the field if React actually sends it in the request)
+        $validatedData = $request->validate([
+            'school_id' => 'sometimes|required|integer',
+            'course_name' => 'sometimes|required|string|max:255',
+            'required_hours' => 'sometimes|required|integer|min:1'
+        ]);
+
+        // 3. Update the record in the database
+        $requirement->update($validatedData);
+
+        // 4. Return a success response back to React
+        return response()->json([
+            'message' => 'Requirement updated successfully!',
+            'data' => $requirement
+        ], 200);
+    }
+
     public function deleteRequirement($id)
     {
         $setting = RequirementSetting::findOrFail($id);

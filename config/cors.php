@@ -20,7 +20,7 @@ return [
 
     // 🚨 THIS WAS THE FIX: No more '*' wildcard! We explicitly list your safe domains.
     'allowed_origins' => [
-        'http   ://localhost:5173', 
+        'http://localhost:5173', 
         'http://localhost:3000', 
         'https://climbstracker.vercel.app',
         'https://192.168.25.190:5173'
