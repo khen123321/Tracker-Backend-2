@@ -25,7 +25,7 @@ use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\AnnouncementController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\Api\NotificationController;
-use App\Http\Controllers\Api\PasswordResetController; // ✨ ADDED FOR PASSWORD RESET
+use App\Http\Controllers\Api\PasswordResetController;
 
 use Exception;
 
@@ -157,8 +157,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/hr/users',           [UserController::class, 'store']); 
     Route::put('/hr/users/{id}/force-reset-password', [UserController::class, 'forceResetPassword']);
     Route::get('/hr/dashboard/schools',        [DashboardController::class, 'getSchools']);
-    Route::get('/hr/requests/{id}',            [FormRequestController::class, 'show']);
-    Route::post('/hr/requests/{id}/process',   [FormRequestController::class, 'processRequest']);
+    
+    // ✨ FIXED: Added the missing index route and updated prefixes for forms & requests
+    Route::get('/hr/forms-requests',           [FormRequestController::class, 'index']);
+    Route::get('/hr/forms-requests/{id}',      [FormRequestController::class, 'show']);
+    Route::post('/hr/forms-requests/{id}/process', [FormRequestController::class, 'processRequest']);
 
     // ── Events ────────────────────────────────────────────────────────────────
     Route::get('/events',  [EventController::class, 'index']);
@@ -180,10 +183,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // ── HR Settings ───────────────────────────────────────────────────────────
     Route::get('/hr/settings/requirements',          [SettingsController::class, 'getRequirements']);
     Route::post('/hr/settings/requirements',         [SettingsController::class, 'storeRequirement']);
-    
-    // ✨ ADDED THIS PUT ROUTE TO FIX YOUR ERROR ✨
     Route::put('/hr/settings/requirements/{id}',     [SettingsController::class, 'updateRequirement']);
-    
     Route::delete('/hr/settings/requirements/{id}',  [SettingsController::class, 'deleteRequirement']);
     Route::get('/hr/settings/schools',               [SettingsController::class, 'getSchools']);
 
