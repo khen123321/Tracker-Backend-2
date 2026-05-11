@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\Notification;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
@@ -20,10 +19,9 @@ class NotificationController extends Controller
                 return response()->json(['error' => 'Unauthorized'], 401);
             }
 
-            // Get notifications for this user, newest first
-            $notifications = Notification::where('user_id', $user->id)
-                ->orderBy('created_at', 'desc')
-                ->get();
+            // ✨ THE FIX: Laravel automatically knows to check notifiable_id and notifiable_type!
+            // It also automatically sorts them by newest first.
+            $notifications = $user->notifications;
 
             return response()->json($notifications);
         } catch (\Exception $e) {
@@ -37,8 +35,13 @@ class NotificationController extends Controller
     public function markAsRead($id)
     {
         try {
-            $notification = Notification::where('user_id', Auth::id())->findOrFail($id);
-            $notification->update(['read_at' => now()]);
+            $user = Auth::user();
+            
+            // Find the notification specifically belonging to this user
+            $notification = $user->notifications()->findOrFail($id);
+            
+            // ✨ THE FIX: Use Laravel's built-in markAsRead helper
+            $notification->markAsRead();
 
             return response()->json(['message' => 'Marked as read']);
         } catch (\Exception $e) {
@@ -52,9 +55,10 @@ class NotificationController extends Controller
     public function markAllAsRead()
     {
         try {
-            Notification::where('user_id', Auth::id())
-                ->whereNull('read_at')
-                ->update(['read_at' => now()]);
+            $user = Auth::user();
+            
+            // ✨ THE FIX: One line replaces the whole manual update query!
+            $user->unreadNotifications->markAsRead();
 
             return response()->json(['message' => 'All marked as read']);
         } catch (\Exception $e) {

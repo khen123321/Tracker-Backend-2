@@ -261,7 +261,6 @@ class HrController extends Controller
                     'email'             => $user->email,
                     'role'              => $user->role,
                     
-                    // ✨ ADDED THESE TWO LINES TO FIX THE VISIBILITY ✨
                     'status'            => $user->status,
                     'email_verified_at' => $user->email_verified_at ? $user->email_verified_at->format('M j, Y, g:i a') : null,
                     
@@ -309,7 +308,6 @@ class HrController extends Controller
             ->get();
             
         $interns->transform(function ($user) {
-            // ✨ Explicitly mapping the exact fields React needs
             return [
                 'id' => $user->id,
                 'name' => $user->first_name . ' ' . $user->last_name,
@@ -320,7 +318,9 @@ class HrController extends Controller
                 'email_verified_at' => $user->email_verified_at ? $user->email_verified_at->format('M j, Y, g:i a') : null,
                 'role' => $user->role,
                 'attendance_logs_sum_hours_rendered' => $user->attendance_logs_sum_hours_rendered,
-                'intern' => $user->intern
+                'intern' => $user->intern,
+                // Explicitly pull the avatar_url out to the top level for easier access in React
+                'avatar_url' => $user->intern?->avatar_url
             ];
         });
 
@@ -411,14 +411,16 @@ class HrController extends Controller
         }
     }
 
+    // ✨ THE NEW BULK ADD HOURS FUNCTION (With Late & AM/PM Half Days) ✨
     public function bulkAddHours(Request $request)
     {
         $request->validate([
             'intern_ids' => 'required|array',
-            'date' => 'required|date',
-            'input_type' => 'required|in:time,full_day',
-            'time_in' => 'nullable|required_if:input_type,time',
-            'time_out' => 'nullable|required_if:input_type,time',
+            'date'       => 'required|date',
+            'event_type' => 'nullable|string',
+            'input_type' => 'required|in:time,full_day,half_day_am,half_day_pm',
+            'time_in'    => 'nullable|required_if:input_type,time',
+            'time_out'   => 'nullable|required_if:input_type,time',
         ]);
 
         DB::beginTransaction();
@@ -433,7 +435,18 @@ class HrController extends Controller
                         $timeOut = Carbon::parse($request->date . ' 17:00:00');
                         $newHours = 8;
                     } 
+                    elseif ($request->input_type === 'half_day_am') {
+                        $timeIn = Carbon::parse($request->date . ' 08:00:00');
+                        $timeOut = Carbon::parse($request->date . ' 12:00:00');
+                        $newHours = 4;
+                    } 
+                    elseif ($request->input_type === 'half_day_pm') {
+                        $timeIn = Carbon::parse($request->date . ' 13:00:00');
+                        $timeOut = Carbon::parse($request->date . ' 17:00:00');
+                        $newHours = 4;
+                    } 
                     else {
+                        // Exact Time Input
                         $timeIn = Carbon::parse($request->date . ' ' . $request->time_in);
                         $timeOut = Carbon::parse($request->date . ' ' . $request->time_out);
                         
@@ -442,12 +455,19 @@ class HrController extends Controller
                         $noon = Carbon::parse($request->date . ' 12:00:00');
                         $onePM = Carbon::parse($request->date . ' 13:00:00');
                         
+                        // Auto deduct lunch break if it overlaps
                         if ($timeIn->lessThanOrEqualTo($noon) && $timeOut->greaterThanOrEqualTo($onePM)) {
                             $newHours -= 1;
                         }
                     }
                     
                     $noteAddition = trim(($request->reason ?? '') . ' ' . ($request->notes ?? ''));
+
+                    // Check if HR specifically marked them as Late or Half Day
+                    $logStatus = 'Present';
+                    if (in_array($request->event_type, ['Late', 'Half Day'])) {
+                        $logStatus = $request->event_type;
+                    }
 
                     $existingLog = AttendanceLog::where('intern_id', $intern->id)
                                                 ->where('date', $request->date)
@@ -458,16 +478,22 @@ class HrController extends Controller
                         if ($noteAddition) {
                             $existingLog->notes = $existingLog->notes ? $existingLog->notes . ' | Add: ' . $noteAddition : 'Add: ' . $noteAddition;
                         }
+                        
+                        // Update status to Late/Half Day if it was just Present
+                        if ($existingLog->status === 'Present' && $logStatus !== 'Present') {
+                            $existingLog->status = $logStatus;
+                        }
+                        
                         $existingLog->save();
                     } else {
                         AttendanceLog::create([
-                            'intern_id' => $intern->id,
-                            'date' => $request->date,
-                            'time_in_am' => $timeIn->toDateTimeString(),
-                            'time_out_am' => $timeOut->toDateTimeString(),
+                            'intern_id'      => $intern->id,
+                            'date'           => $request->date,
+                            'time_in_am'     => $timeIn->toDateTimeString(),
+                            'time_out_am'    => $timeOut->toDateTimeString(),
                             'hours_rendered' => $newHours,
-                            'status' => 'Present',
-                            'notes' => $noteAddition ?: null
+                            'status'         => $logStatus, 
+                            'notes'          => $noteAddition ?: null
                         ]);
                     }
                 }
@@ -487,47 +513,198 @@ class HrController extends Controller
         }
     }
 
+    /* =========================================================
+       === BULLETPROOF EXPORT FUNCTION (DYNAMIC) === 
+       ========================================================= */
+
     public function bulkExport(Request $request)
     {
-        $request->validate([
-            'ids' => 'required|array'
+        // Accept the payload from React
+        $validated = $request->validate([
+            'ids' => 'required|array',
+            'type' => 'required|string', 
+            'format' => 'required|string', 
+            'date_range' => 'nullable|string'
         ]);
 
-        $users = User::withTrashed()->with('intern')->whereIn('id', $request->ids)->get();
-        $fileName = 'Interns_Export_' . date('Y-m-d') . '.csv';
-        
-        $headers = array(
+        $exportType = $validated['type']; // 'info', 'log', 'progress', or 'full'
+        $dateRange = $validated['date_range'] ?? 'All Time';
+
+        // Eager load relationships
+        $interns = \App\Models\User::with(['intern.school', 'intern.department', 'school', 'department'])
+            ->whereIn('id', $validated['ids'])
+            ->get();
+
+        $filename = "Bulk_Intern_" . ucfirst($exportType) . "_Export_" . date('Y-m-d') . ".csv";
+
+        $headers = [
             "Content-type"        => "text/csv",
-            "Content-Disposition" => "attachment; filename=$fileName",
+            "Content-Disposition" => "attachment; filename=$filename",
             "Pragma"              => "no-cache",
             "Cache-Control"       => "must-revalidate, post-check=0, pre-check=0",
             "Expires"             => "0"
-        );
+        ];
 
-        $columns = ['ID', 'First Name', 'Last Name', 'Email', 'Role', 'Status'];
-
-        ActivityLog::create([
-            'user_id' => Auth::id(),
-            'action' => 'Exported Intern Data',
-            'description' => "Exported CSV data for " . count($request->ids) . " intern(s)."
-        ]);
-
-        $callback = function() use($users, $columns) {
+        $callback = function() use ($interns, $exportType, $dateRange) {
             $file = fopen('php://output', 'w');
-            fputcsv($file, $columns);
-            foreach ($users as $user) {
-                fputcsv($file, [
-                    $user->id,
-                    $user->first_name,
-                    $user->last_name,
-                    $user->email,
-                    $user->role,
-                    $user->status
-                ]);
+
+            // ✨ Helper to apply Date Range filter to attendance queries ✨
+            $applyDateRange = function($query) use ($dateRange) {
+                if ($dateRange === 'This Month') {
+                    $query->whereMonth('date', Carbon::now()->month)
+                          ->whereYear('date', Carbon::now()->year);
+                } elseif ($dateRange === 'Last Month') {
+                    $query->whereMonth('date', Carbon::now()->subMonth()->month)
+                          ->whereYear('date', Carbon::now()->subMonth()->year);
+                }
+                return $query;
+            };
+
+            // ========================================================
+            // 1. EXPORT TYPE: INTERN INFO
+            // ========================================================
+            if ($exportType === 'info') {
+                fputcsv($file, ['ID', 'Name', 'Email', 'School', 'Department', 'Status']);
+
+                foreach ($interns as $intern) {
+                    $schoolName = $this->getAggressiveSchoolName($intern);
+                    $deptName = $this->getAggressiveDeptName($intern);
+
+                    fputcsv($file, [
+                        $intern->id,
+                        trim($intern->first_name . ' ' . $intern->last_name),
+                        $intern->email,
+                        $schoolName,
+                        $deptName,
+                        $intern->status ?? 'Unknown'
+                    ]);
+                }
+            } 
+            // ========================================================
+            // 2. EXPORT TYPE: ATTENDANCE LOG
+            // ========================================================
+            elseif ($exportType === 'log') {
+                fputcsv($file, ['Name', 'Date', 'Time In', 'Time Out', 'Hours Rendered', 'Status']);
+
+                foreach ($interns as $intern) {
+                    $internIdForLogs = $intern->intern->id ?? $intern->id;
+                    $fullName = trim($intern->first_name . ' ' . $intern->last_name);
+                    
+                    // Fetch logs and apply date filter
+                    $logsQuery = \App\Models\AttendanceLog::where('intern_id', $internIdForLogs)->orderBy('date', 'desc');
+                    $logsQuery = $applyDateRange($logsQuery);
+                    $logs = $logsQuery->get();
+
+                    if ($logs->isEmpty()) {
+                        fputcsv($file, [$fullName, 'No records found for ' . $dateRange, '-', '-', '0', '-']);
+                    } else {
+                        foreach ($logs as $log) {
+                            fputcsv($file, [
+                                $fullName,
+                                $log->date,
+                                $log->time_in,
+                                $log->time_out,
+                                $log->hours_rendered,
+                                $log->status ?? 'Present'
+                            ]);
+                        }
+                    }
+                }
+            } 
+            // ========================================================
+            // 3. EXPORT TYPE: HOURS PROGRESS
+            // ========================================================
+            elseif ($exportType === 'progress') {
+                fputcsv($file, ['Name', 'School', 'Required Hours', 'Rendered Hours (' . $dateRange . ')', 'Remaining Hours', 'Progress %']);
+
+                foreach ($interns as $intern) {
+                    $schoolName = $this->getAggressiveSchoolName($intern);
+                    $internIdForLogs = $intern->intern->id ?? $intern->id;
+                    
+                    $req = $intern->intern->required_hours ?? 486;
+                    
+                    // Sum hours with date filter applied
+                    $logsQuery = \App\Models\AttendanceLog::where('intern_id', $internIdForLogs);
+                    $logsQuery = $applyDateRange($logsQuery);
+                    $ren = $logsQuery->sum('hours_rendered');
+                    
+                    $rem = max($req - $ren, 0);
+                    $prog = $req > 0 ? round(($ren / $req) * 100, 1) : 0;
+                    if ($prog > 100) $prog = 100;
+
+                    fputcsv($file, [
+                        trim($intern->first_name . ' ' . $intern->last_name),
+                        $schoolName,
+                        $req,
+                        $ren,
+                        $rem,
+                        $prog . '%'
+                    ]);
+                }
+            } 
+            // ========================================================
+            // 4. EXPORT TYPE: FULL REPORT
+            // ========================================================
+            elseif ($exportType === 'full') {
+                fputcsv($file, ['ID', 'Name', 'Email', 'School', 'Department', 'Required Hrs', 'Rendered Hrs (' . $dateRange . ')', 'Remaining', 'Progress %', 'Status']);
+
+                foreach ($interns as $intern) {
+                    $schoolName = $this->getAggressiveSchoolName($intern);
+                    $deptName = $this->getAggressiveDeptName($intern);
+                    
+                    $internIdForLogs = $intern->intern->id ?? $intern->id;
+                    $req = $intern->intern->required_hours ?? 486;
+                    
+                    // Sum hours with date filter applied
+                    $logsQuery = \App\Models\AttendanceLog::where('intern_id', $internIdForLogs);
+                    $logsQuery = $applyDateRange($logsQuery);
+                    $ren = $logsQuery->sum('hours_rendered');
+                    
+                    $rem = max($req - $ren, 0);
+                    $prog = $req > 0 ? round(($ren / $req) * 100, 1) : 0;
+                    if ($prog > 100) $prog = 100;
+
+                    fputcsv($file, [
+                        $intern->id,
+                        trim($intern->first_name . ' ' . $intern->last_name),
+                        $intern->email,
+                        $schoolName,
+                        $deptName,
+                        $req,
+                        $ren,
+                        $rem,
+                        $prog . '%',
+                        $intern->status ?? 'Unknown'
+                    ]);
+                }
             }
+
             fclose($file);
         };
 
         return response()->stream($callback, 200, $headers);
+    }
+
+    // ✨ HELPER FUNCTIONS FOR BULK EXPORT ✨
+    private function getAggressiveSchoolName($intern) {
+        $schoolName = $intern->intern?->school?->name ?? $intern->school?->name ?? null;
+        if (!$schoolName) {
+            $schoolId = $intern->intern->school_id ?? $intern->school_id ?? null;
+            if ($schoolId) {
+                $schoolName = \Illuminate\Support\Facades\DB::table('schools')->where('id', $schoolId)->value('name');
+            }
+        }
+        return $schoolName ?? 'Unassigned';
+    }
+
+    private function getAggressiveDeptName($intern) {
+        $deptName = $intern->intern?->department?->name ?? $intern->department?->name ?? null;
+        if (!$deptName) {
+            $deptId = $intern->intern->department_id ?? $intern->department_id ?? null;
+            if ($deptId) {
+                $deptName = \Illuminate\Support\Facades\DB::table('departments')->where('id', $deptId)->value('name');
+            }
+        }
+        return $deptName ?? $intern->assigned_department ?? 'Unassigned';
     }
 }

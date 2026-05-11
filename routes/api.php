@@ -105,14 +105,29 @@ Route::prefix('public')->group(function () {
 // Image proxy — bypasses CORS for storage images
 Route::get('/get-avatar', function (Request $request) {
     $path = $request->query('path');
-    if (Storage::disk('public')->exists($path)) {
-        $file = Storage::disk('public')->get($path);
-        $type = Storage::disk('public')->mimeType($path);
-        return response($file, 200)->header('Content-Type', $type);
-    }
-    return response()->json(['error' => 'File not found'], 404);
-});
+    $path = str_replace('storage/', '', $path);
 
+    if (!Storage::disk('public')->exists($path)) {
+        return response()->json(['error' => 'File not found'], 404);
+    }
+
+    $file = Storage::disk('public')->get($path);
+
+    // ← Replace mimeType() with this — no finfo needed
+    $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+    $mimeMap = [
+        'png'  => 'image/png',
+        'jpg'  => 'image/jpeg',
+        'jpeg' => 'image/jpeg',
+        'gif'  => 'image/gif',
+        'webp' => 'image/webp',
+    ];
+    $type = $mimeMap[$extension] ?? 'application/octet-stream';
+
+    return response($file, 200)
+        ->header('Content-Type', $type)
+        ->header('Access-Control-Allow-Origin', '*');
+});
 
 // ==========================================
 // Protected Routes (Requires Sanctum Token)

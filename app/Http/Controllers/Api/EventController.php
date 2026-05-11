@@ -7,11 +7,12 @@ use App\Models\Event;
 use App\Models\User;
 use App\Models\School;
 use App\Models\Intern;
-use App\Models\Notification; 
+// use App\Models\Notification; <-- We don't need this anymore
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str; // ✨ ADDED THIS FOR UUID GENERATION
 
 class EventController extends Controller
 {
@@ -225,23 +226,26 @@ class EventController extends Controller
 
             foreach ($usersToNotify as $user) {
                 // 🔥 THE ULTIMATE FAILSAFE 🔥
-                // 1. If the user is the one who clicked "Post", SKIP THEM (using == to bypass strict typing issues).
+                // 1. If the user is the one who clicked "Post", SKIP THEM.
                 // 2. If the user is an HR/Admin (just in case they slipped into the query), SKIP THEM.
                 if ($user->id == $currentUserId || in_array(strtolower($user->role), ['hr', 'admin', 'superadmin'])) {
                     continue; 
                 }
 
-                Notification::create([
-                    'user_id' => $user->id,
-                    'title'   => 'New ' . ucfirst($validated['type']), 
-                    'message' => $event->title,
-                    'type'    => 'info',
-                    'read_at' => null,
-                    'data'    => json_encode([
-                        'title'    => 'New ' . ucfirst($validated['type']) . ': ' . $event->title,
-                        'message'  => 'Check your calendar for details.',
-                        'event_id' => $event->id
-                    ])
+                // ✨ FIXED: Using DB facade to adhere to Laravel's standard notifications table schema
+                DB::table('notifications')->insert([
+                    'id'              => Str::uuid(),
+                    'type'            => 'App\Notifications\NewEventAlert',
+                    'notifiable_type' => 'App\Models\User',
+                    'notifiable_id'   => $user->id,
+                    'data'            => json_encode([
+                        'type'       => 'info',
+                        'title'      => 'New ' . ucfirst($validated['type']) . ': ' . $event->title,
+                        'message'    => 'Check your calendar for details.',
+                        'event_id'   => $event->id
+                    ]),
+                    'created_at'      => now(),
+                    'updated_at'      => now(),
                 ]);
             }
 

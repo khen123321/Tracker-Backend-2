@@ -11,30 +11,27 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use Illuminate\Support\Facades\Storage; // ✨ ADDED FOR FILE UPLOADS
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Log;
 
 class FormRequestController extends Controller
 {
     /**
      * ✨ HR: Fetch all requests for the HR Dashboard ✨
-     * (NEW FUNCTION ADDED FOR THE REACT DASHBOARD)
      */
     public function index()
     {
         try {
-            // Fetch all requests and map them so the data structure matches 
-            // what the React frontend expects (e.g., mapping user to intern.user)
             $requests = InternRequest::orderBy('created_at', 'desc')->get()->map(function($req) {
                 $user = User::find($req->user_id);
                 return [
                     'id'                 => $req->id,
                     'type'               => $req->type,
-                    'target_date'        => $req->date_of_absence, // Mapped for React
+                    'target_date'        => $req->date_of_absence, 
                     'reason'             => $req->reason,
                     'additional_details' => $req->additional_details,
-                    'status'             => strtolower($req->status), // Ensure lowercase for frontend badge classes
+                    'status'             => strtolower($req->status), 
                     'attachment_path'    => $req->attachment_path,
-                    // Mocking the 'intern.user' structure so the frontend table doesn't crash
                     'intern' => [
                         'user' => [
                             'first_name' => $user ? $user->first_name : 'Unknown',
@@ -55,23 +52,22 @@ class FormRequestController extends Controller
     }
 
     /**
-     * ✨ INTERN: Submits a Form Request (NOW WITH ATTACHMENTS) ✨
+     * ✨ INTERN: Submits a Form Request (WITH ATTACHMENTS & CHEAT CODE) ✨
      */
     public function store(Request $request)
     {
-        // 1. Validate the incoming data (including the optional file)
+        // 1. Validate the incoming data
         $validated = $request->validate([
             'type' => 'required|string',
             'date_of_absence' => 'required|date',
             'reason' => 'required|string',
             'additional_details' => 'nullable|string',
-            'attachment' => 'nullable|file|mimes:jpg,jpeg,png,pdf,doc,docx|max:5120', // Max 5MB
+            'attachment' => 'nullable|file|mimes:jpg,jpeg,png,pdf,doc,docx|max:5120',
         ]);
 
         // 2. Handle the File Upload
         $attachmentPath = null;
         if ($request->hasFile('attachment')) {
-            // This saves the file into storage/app/public/form_attachments
             $attachmentPath = $request->file('attachment')->store('form_attachments', 'public');
         }
 
@@ -82,7 +78,7 @@ class FormRequestController extends Controller
             'date_of_absence' => $validated['date_of_absence'],
             'reason' => $validated['reason'],
             'additional_details' => $request->additional_details,
-            'attachment_path' => $attachmentPath, // ✨ SAVES THE PATH HERE
+            'attachment_path' => $attachmentPath,
             'status' => 'Pending',
         ]);
 
@@ -92,6 +88,16 @@ class FormRequestController extends Controller
             Notification::send($admins, new NewFormRequestAlert($internRequest, Auth::user()));
         }
 
+        // ✨ THE ULTIMATE CHEAT CODE ✨
+        // This sucks up any invisible spaces, BOMs, or PHP warnings that printed early
+        $rogueOutput = ob_get_clean(); 
+        
+        // If we caught something, snitch on it to the Laravel log!
+        if (!empty($rogueOutput)) {
+            Log::error("🚨 WE CAUGHT THE INVISIBLE OUTPUT: " . bin2hex($rogueOutput) . " | Raw text: " . $rogueOutput);
+        }
+
+        // 5. Send the clean JSON response back to React
         return response()->json([
             'message' => 'Form submitted successfully!',
             'data' => $internRequest
@@ -105,13 +111,10 @@ class FormRequestController extends Controller
     {
         try {
             $internRequest = InternRequest::findOrFail($id);
-            
-            // Look up the user's name manually (or use relationships if you have them)
             $targetUser = User::find($internRequest->user_id);
 
             return response()->json([
                 'id' => $internRequest->id,
-                // ✨ FIXED: Concatenating first_name and last_name ✨
                 'intern_name' => $targetUser ? trim($targetUser->first_name . ' ' . $targetUser->last_name) : 'Unknown Intern',
                 'type' => $internRequest->type,
                 'date_of_absence' => \Carbon\Carbon::parse($internRequest->date_of_absence)->format('M d, Y'),
@@ -134,31 +137,24 @@ class FormRequestController extends Controller
      */
     public function processRequest(Request $request, $id)
     {
-        // Support both old 'action' payload and new 'status' payload
         $request->validate([
             'action' => 'nullable|in:approve,reject',
             'status' => 'nullable|in:approved,rejected'
         ]);
 
         try {
-            // Find the request
             $internRequest = InternRequest::findOrFail($id);
             
             // 1. Update the Status
             if ($request->status) {
-                // Read from new React Payload
-                $internRequest->status = ucfirst($request->status); // 'Approved' or 'Rejected'
+                $internRequest->status = ucfirst($request->status); 
             } else {
-                // Read from legacy payload
                 $internRequest->status = $request->action === 'approve' ? 'Approved' : 'Rejected';
             }
             
-            // Note: If you want to save $request->remarks to the database, 
-            // you would need to add an 'hr_remarks' column to your intern_requests table.
-            
             $internRequest->save();
 
-            // 2. ✨ THE NUCLEAR FIX: Force the notification straight into the database ✨
+            // 2. Force the notification straight into the database
             $targetUser = User::find($internRequest->user_id);
 
             if ($targetUser) {
@@ -169,7 +165,6 @@ class FormRequestController extends Controller
                     ? "Your request for {$date} has been approved."
                     : "Your request for {$date} has been rejected by HR.";
 
-                // Bypass the Notification class and write directly to the table
                 DB::table('notifications')->insert([
                     'id' => Str::uuid(),
                     'type' => 'App\Notifications\InternRequestProcessedAlert',
@@ -190,7 +185,7 @@ class FormRequestController extends Controller
                 throw new \Exception("User ID missing from this form.");
             }
 
-            return response()->json(['message' => "BANANA {$internRequest->status} successfully!"]);
+            return response()->json(['message' => "Request {$internRequest->status} successfully!"]);
 
         } catch (\Exception $e) {
             return response()->json([
@@ -202,7 +197,6 @@ class FormRequestController extends Controller
 
     /**
      * ✨ HR: Download attached file ✨
-     * (NEW FUNCTION ADDED FOR THE REACT DASHBOARD)
      */
     public function download($id)
     {

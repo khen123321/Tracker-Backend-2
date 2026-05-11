@@ -6,7 +6,7 @@ use Illuminate\Http\Request;
 use App\Models\User;
 use App\Models\AttendanceLog; 
 use Illuminate\Support\Facades\Response;
-use Illuminate\Support\Facades\DB; // ✨ THE FIX: We added DB so we can bypass the Models
+use Illuminate\Support\Facades\DB; 
 
 class ReportController extends Controller
 {
@@ -14,8 +14,10 @@ class ReportController extends Controller
     {
         $type = $request->input('report_type', 'ojt'); // 'ojt' or 'school'
         
-        // Fetch interns
-        $interns = User::where('role', 'intern')->with('intern')->get();
+        // ✨ THE FIX: Eager Load all possible relationships so Laravel doesn't drop the data!
+        $interns = User::where('role', 'intern')
+            ->with(['intern.school', 'intern.department', 'school', 'department'])
+            ->get();
 
         // Fetch the live hours calculation
         $internIds = $interns->pluck('intern.id')->filter()->toArray();
@@ -51,25 +53,31 @@ class ReportController extends Controller
                     
                     $status = $percent >= 100 ? 'Completed' : 'On-going';
 
-                    // ✨ THE NUCLEAR OPTION: Direct Database Lookup ✨
-                    // This forces Laravel to look straight at the DB, ignoring broken Models
-                    $schoolName = 'Unassigned';
-                    $schoolId = $intern->intern->school_id ?? null;
-                    if ($schoolId) {
-                        $schoolName = DB::table('schools')->where('id', $schoolId)->value('name') ?? 'Unassigned';
+                    // ✨ THE AGGRESSIVE SCHOOL HUNTER ✨
+                    $schoolName = $intern->intern?->school?->name ?? $intern->school?->name ?? null;
+                    if (!$schoolName) {
+                        $schoolId = $intern->intern->school_id ?? $intern->school_id ?? null;
+                        if ($schoolId) {
+                            $schoolName = DB::table('schools')->where('id', $schoolId)->value('name');
+                        }
                     }
+                    $schoolName = $schoolName ?? 'Unassigned';
 
-                    $deptName = 'Unassigned';
-                    $deptId = $intern->intern->department_id ?? null;
-                    if ($deptId) {
-                        $deptName = DB::table('departments')->where('id', $deptId)->value('name') ?? 'Unassigned';
+                    // ✨ THE AGGRESSIVE DEPARTMENT HUNTER ✨
+                    $deptName = $intern->intern?->department?->name ?? $intern->department?->name ?? null;
+                    if (!$deptName) {
+                        $deptId = $intern->intern->department_id ?? $intern->department_id ?? null;
+                        if ($deptId) {
+                            $deptName = DB::table('departments')->where('id', $deptId)->value('name');
+                        }
                     }
+                    $deptName = $deptName ?? $intern->assigned_department ?? 'Unassigned';
 
                     fputcsv($file, [
                         $intern->first_name . ' ' . $intern->last_name,
                         $intern->email, 
-                        $schoolName, // ✨ Prints raw DB School Name
-                        $deptName,   // ✨ Prints raw DB Department Name
+                        $schoolName, 
+                        $deptName,   
                         $req,
                         $ren,
                         $percent . '%',
@@ -83,12 +91,15 @@ class ReportController extends Controller
 
                 foreach ($interns as $intern) {
                     
-                    // ✨ THE NUCLEAR OPTION ✨
-                    $schoolName = 'Unassigned';
-                    $schoolId = $intern->intern->school_id ?? null;
-                    if ($schoolId) {
-                        $schoolName = DB::table('schools')->where('id', $schoolId)->value('name') ?? 'Unassigned';
+                    // ✨ THE AGGRESSIVE SCHOOL HUNTER ✨
+                    $schoolName = $intern->intern?->school?->name ?? $intern->school?->name ?? null;
+                    if (!$schoolName) {
+                        $schoolId = $intern->intern->school_id ?? $intern->school_id ?? null;
+                        if ($schoolId) {
+                            $schoolName = DB::table('schools')->where('id', $schoolId)->value('name');
+                        }
                     }
+                    $schoolName = $schoolName ?? 'Unassigned';
 
                     if (!isset($schoolData[$schoolName])) {
                         $schoolData[$schoolName] = ['total' => 0, 'req' => 0, 'ren' => 0, 'completed' => 0];
@@ -98,7 +109,6 @@ class ReportController extends Controller
                     
                     $internId = $intern->intern->id ?? null;
                     $req = $intern->intern->required_hours ?? 486;
-                    
                     $ren = $internId ? (float)($allTimeHours->get($internId) ?? 0) : 0;
                     
                     $schoolData[$schoolName]['req'] += $req;
