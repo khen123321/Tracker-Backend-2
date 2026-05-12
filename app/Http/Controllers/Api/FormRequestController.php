@@ -62,7 +62,8 @@ class FormRequestController extends Controller
             'date_of_absence' => 'required|date',
             'reason' => 'required|string',
             'additional_details' => 'nullable|string',
-            'attachment' => 'nullable|file|mimes:jpg,jpeg,png,pdf,doc,docx|max:5120',
+            // ✨ THE FIX: Increased from 5120 to 10240 (10 Megabytes)
+            'attachment' => 'nullable|file|mimes:jpg,jpeg,png,pdf,doc,docx|max:10240',
         ]);
 
         // 2. Handle the File Upload
